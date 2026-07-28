@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Prebuilt `t32api64` library for `aarch64-unknown-linux-gnu`, enabling the
+  Linux ARM64 build (native or cross-compiled) alongside x86_64 and Windows.
+- CI now builds and releases `t32mcp-linux-aarch64`.
+
+### Changed
+- `t32mcp-rs/lib` is now organized into per-target subdirectories
+  (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
+  `x86_64-pc-windows-msvc`) since the Linux x86_64 and aarch64 `t32api64`
+  libraries share the same filename.
 
 ## [0.2.0] - 2026-07-15
 ### Added
