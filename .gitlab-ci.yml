@@ -73,7 +73,6 @@ secret_detection:
   before_script:
     # bindgen (build.rs) needs libclang to parse lib/t32.h.
     - apt-get update && apt-get install -y --no-install-recommends clang libclang-dev
-    - cargo install --locked uv
 
 clippy:
   extends: .rust-check
@@ -94,7 +93,23 @@ test:
     - cd t32mcp-rs
     - cargo build
     - cargo test --all-targets --no-run
-    - cd ../tests
+  artifacts:
+    # Only needed to hand the debug binary to test:integration; not a release artifact.
+    expire_in: 1h
+    paths:
+      - t32mcp-rs/target/debug/t32mcp
+
+# Runs the Python integration tests (tests/) against the debug binary built by
+# `test`. Uses Astral's prebuilt uv+python image.
+test:integration:
+  extends: .rust-check
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  needs:
+    - test
+  cache: []
+  before_script: []
+  script:
+    - cd tests
     - uv run pytest
 
 # Release gate: only present when a release is requested via RELEASE_VERSION.
@@ -153,6 +168,21 @@ build:linux:
     - mkdir -p "$CI_PROJECT_DIR/dist"
     - cp target/release/t32mcp "$CI_PROJECT_DIR/dist/t32mcp-linux-x86_64"
 
+build:linux-arm64:
+  extends: .rust-build
+  before_script:
+    # bindgen (build.rs) needs libclang to parse lib/t32.h (runs on the host
+    # arch even when cross-compiling). gcc-aarch64-linux-gnu + the cross glibc
+    # headers are the actual aarch64 toolchain; the linker itself is
+    # configured in t32mcp-rs/.cargo/config.toml.
+    - apt-get update && apt-get install -y --no-install-recommends clang libclang-dev gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+    - rustup target add aarch64-unknown-linux-gnu
+  script:
+    - cd t32mcp-rs
+    - cargo build --release --target aarch64-unknown-linux-gnu
+    - mkdir -p "$CI_PROJECT_DIR/dist"
+    - cp target/aarch64-unknown-linux-gnu/release/t32mcp "$CI_PROJECT_DIR/dist/t32mcp-linux-aarch64"
+
 build:windows:
   extends: .rust-build
   before_script:
@@ -201,6 +231,7 @@ upload:
     - if: $RELEASE_VERSION
   needs:
     - build:linux
+    - build:linux-arm64
     - build:windows
     - package:skill
   variables:
@@ -210,6 +241,10 @@ upload:
       curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
         --upload-file dist/t32mcp-linux-x86_64 \
         "${PACKAGE_REGISTRY_URL}/t32mcp-linux-x86_64"
+    - |
+      curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file dist/t32mcp-linux-aarch64 \
+        "${PACKAGE_REGISTRY_URL}/t32mcp-linux-aarch64"
     - |
       curl --fail-with-body --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
         --upload-file dist/t32mcp-windows-x86_64.exe \
@@ -246,6 +281,9 @@ release:
       links:
         - name: "t32mcp-linux-x86_64"
           url: "${PACKAGE_REGISTRY_URL}/t32mcp-linux-x86_64"
+          link_type: "package"
+        - name: "t32mcp-linux-aarch64"
+          url: "${PACKAGE_REGISTRY_URL}/t32mcp-linux-aarch64"
           link_type: "package"
         - name: "t32mcp-windows-x86_64.exe"
           url: "${PACKAGE_REGISTRY_URL}/t32mcp-windows-x86_64.exe"

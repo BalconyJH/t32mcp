@@ -5,7 +5,8 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    println!("cargo:rustc-link-search=lib");
+    let target = env::var("TARGET").unwrap();
+    println!("cargo:rustc-link-search=lib/{target}");
     println!("cargo:rustc-link-lib=t32api64");
 
     let bindings = bindgen::Builder::default()
