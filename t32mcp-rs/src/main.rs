@@ -6,6 +6,7 @@
 use t32mcp::*;
 
 use anyhow::Result;
+use rand::RngExt;
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -19,7 +20,6 @@ use rmcp::{
     },
 };
 
-use rand::Rng;
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
@@ -375,21 +375,18 @@ Important: Only call this tool after a execute_practice_skill that has NOT finis
     }
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for T32 {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            server_info: Implementation {
-                name: env!("CARGO_CRATE_NAME").to_owned(),
-                title: Some("Lauterbach TRACE32 MCP Server".into()),
-                version: env!("CARGO_PKG_VERSION").to_owned(),
-                icons: None,
-                website_url: Some("https://gitlab.com/lauterbach/t32mcp".into()),
-            },
-            instructions: Some("TRACE32 Remote API".into()),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+        let capabilities = ServerCapabilities::builder().enable_tools().build();
+        let info = Implementation::new(
+            env!("CARGO_CRATE_NAME").to_owned(),
+            env!("CARGO_PKG_VERSION").to_owned(),
+        )
+        .with_title("Lauterbach TRACE32 MCP Server")
+        .with_website_url("https://gitlab.com/lauterbach/t32mcp");
+
+        ServerInfo::new(capabilities).with_server_info(info)
     }
 }
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Lauterbach-RemoteAPI
+
 /*
  * TRACE32 Remote API
  *

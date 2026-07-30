@@ -1,5 +1,5 @@
 The TRACE32 Application Programming Interface for Remote Control and JTAG Access
-(“Remote API”) contains source code for the client interface, which is copyright
+("Remote API") contains source code for the client interface, which is copyright
 by Lauterbach. These licensing terms and conditions apply to all files referred to
 in this document.
 

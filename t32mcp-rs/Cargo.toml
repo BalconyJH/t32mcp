@@ -1,10 +1,11 @@
 [package]
 name = "t32mcp"
-version = "0.2.0"
+version = "0.2.1"
+license = "Apache-2.0"
 edition = "2024"
 
 [dependencies]
-rmcp = { version = "0.11.0", features = [
+rmcp = { version = "3.0.1", features = [
     "server",
     "macros",
     "client",
@@ -14,7 +15,7 @@ rmcp = { version = "0.11.0", features = [
     "elicitation",
     "schemars",
 ] }
-tokio = { version = "1.15", features = [
+tokio = { version = "1.53", features = [
     "macros",
     "rt",
     "rt-multi-thread",
@@ -24,7 +25,6 @@ tokio = { version = "1.15", features = [
     "tracing"
 ] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [
@@ -32,27 +32,16 @@ tracing-subscriber = { version = "0.3", features = [
     "std",
     "fmt",
 ] }
-futures = "0.3"
-rand = { version = "0.9", features = ["std"] }
+rand = { version = "0.10", features = ["std"] }
 axum = { version = "0.8", features = ["macros"] }
-schemars = "1.0"
-reqwest = { version = "0.12", features = ["json"] }
-chrono = "0.4"
-uuid = { version = "1.6", features = ["v4", "serde"] }
-serde_urlencoded = "0.7"
-askama = { version = "0.14" }
-tower-http = { version = "0.6", features = ["cors"] }
-hyper = { version = "1" }
-hyper-util = { version = "0", features = ["server"] }
+schemars = "1.2"
 tokio-util = { version = "0.7" }
-url = "2.5"
-tempfile = "3.24.0"
+tempfile = "3.27.0"
 interprocess = { version = "2.4.2", features = ["tokio"] }
-console-subscriber = "0.5.0"
+serde_json = "1.0.151"
 
 [dev-dependencies]
-tokio-stream = { version = "0.1" }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 [build-dependencies]
-bindgen = "0.71.0"
+bindgen = "0.72.1"
