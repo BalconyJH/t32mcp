@@ -7,6 +7,11 @@ SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
 SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
+path = "t32mcp-rs/lib/**"
+SPDX-FileCopyrightText = "Copyright (C) 1998-2026 Lauterbach GmbH"
+SPDX-License-Identifier = "LicenseRef-Lauterbach-RemoteAPI"
+
+[[annotations]]
 path = "tests/**"
 SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
 SPDX-License-Identifier = "Apache-2.0"
