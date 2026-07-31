@@ -176,7 +176,6 @@ build:linux-arm64:
     # headers are the actual aarch64 toolchain; the linker itself is
     # configured in t32mcp-rs/.cargo/config.toml.
     - apt-get update && apt-get install -y --no-install-recommends clang libclang-dev gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-    - rustup target add aarch64-unknown-linux-gnu
   script:
     - cd t32mcp-rs
     - cargo build --release --target aarch64-unknown-linux-gnu

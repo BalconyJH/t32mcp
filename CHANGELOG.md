@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.2] - 2026-07-31
 ### Changed
-- Bumbed version for CI.
+- Bumped version for CI.
+- Fixed CI build of linux arm target.
 
 ## [0.2.1] - 2026-07-30
 ### Added
