@@ -1,9 +1,12 @@
 # Lauterbach TRACE32 MCP Support (Preview)
 
-Please note that this is an early development preview. The implementation is still evolving and may change in future releases.
+> [!NOTE]  
+> This is an early development preview. The implementation is still evolving and may change in future releases.
+
+[![asciicast](https://asciinema.org/a/BSZGeOKfzWOMpVFN.svg)](https://asciinema.org/a/BSZGeOKfzWOMpVFN)
 
 **Questions & Feedback**:
-We would love to get your feedback and improvement suggestions for our MCP implementation. For questions, feedback and help, please use the GitLab issues feature.
+We would love to get your feedback and improvement suggestions for our MCP implementation. For questions, feedback and help, please refer to the [contributing guidelines](./CONTRIBUTING.md).
 
 ## Table of Contents
 1. [Files overview](#files-overview)
