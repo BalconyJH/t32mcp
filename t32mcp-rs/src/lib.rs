@@ -1,20 +1,34 @@
 // SPDX-FileCopyrightText: 2026 Lauterbach GmbH
 // SPDX-License-Identifier: Apache-2.0
 
-//! Communicating with TRACE32 from Rust. Built on top of Remote API.
+//! Communication with TRACE32. Built on top of the Remote API.
 //!
 //! Pipe communication:
 //! - Windows: Named Pipe
 //! - Linux: FIFO
 
 use anyhow::Result;
-use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_void};
-use std::ptr;
+use std::sync::{Mutex, OnceLock};
 
-#[allow(warnings)]
-pub mod t32 {
-    include!(concat!(env!("OUT_DIR"), "/t32.rs"));
+pub mod t32api;
+
+use t32api::{Connection, T32_DEV_ICD};
+
+/// The process-wide TRACE32 Remote API connection
+/// (equivalent to the implicit channel of the C Remote API library).
+fn channel() -> &'static Mutex<Option<Connection>> {
+    static CHANNEL: OnceLock<Mutex<Option<Connection>>> = OnceLock::new();
+    CHANNEL.get_or_init(|| Mutex::new(None))
+}
+
+fn with_channel<T>(f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
+    let mut guard = channel()
+        .lock()
+        .map_err(|e| format!("TRACE32 connection lock poisoned: {e}"))?;
+    let conn = guard
+        .as_mut()
+        .ok_or_else(|| "not connected to TRACE32".to_string())?;
+    f(conn)
 }
 
 #[cfg(target_os = "windows")]
@@ -75,40 +89,19 @@ pub async fn t32_open_pipe(name: &str) -> Result<Receiver, String> {
 }
 
 pub fn t32_connect(port: u16) -> Result<(), String> {
-    let mut channel: *mut c_void = ptr::null_mut();
+    let mut connection =
+        Connection::connect("localhost", port, Some(std::time::Duration::from_secs(60)))
+            .map_err(|e| format!("Connection with TRACE32 failed: {e}"))?;
 
-    let e = unsafe { t32::T32_RequestChannelNetTcp(&mut channel as *mut *mut c_void) };
-    if e != 0 {
-        return Err(format!(
-            "Connection with TRACE32 failed: T32_RequestChannelNetTcp returned {e}"
-        ));
-    }
+    connection
+        .attach(T32_DEV_ICD as u8)
+        .map_err(|e| format!("Connection with TRACE32 failed: T32_Attach: {e}"))?;
 
-    unsafe {
-        t32::T32_SetChannel(channel);
-    }
-
-    let port_config = CString::new("PORT=").expect("CString::new failed");
-    let port_value = CString::new(port.to_string()).expect("CString::new failed");
-    let e = unsafe { t32::T32_Config(port_config.as_ptr(), port_value.as_ptr()) };
-    if e != 0 {
-        return Err(format!(
-            "Connection with TRACE32 failed: T32_Config returned {e}"
-        ));
-    }
-
-    let e = unsafe { t32::T32_Init() };
-    if e != 0 {
-        return Err(format!(
-            "Connection with TRACE32 failed: T32_Init returned {e}"
-        ));
-    }
-
-    let e = unsafe { t32::T32_Attach(t32::T32_DEV_ICD as i32) };
-    if e != 0 {
-        return Err(format!(
-            "Connection with TRACE32 failed: T32_Attach returned {e}"
-        ));
+    {
+        let mut guard = channel()
+            .lock()
+            .map_err(|e| format!("TRACE32 connection lock poisoned: {e}"))?;
+        *guard = Some(connection);
     }
 
     let area = t32_fnc(r"AREA.SELECTed()".to_string())?;
@@ -118,39 +111,11 @@ pub fn t32_connect(port: u16) -> Result<(), String> {
 }
 
 pub fn t32_cmd(cmd: String) -> Result<(), String> {
-    let c = CString::new(cmd).expect("CString::new failed");
-    let e = unsafe { t32::T32_Cmd(c.as_ptr()) };
-    if e != 0 {
-        return Err(format!("TRACE32 command failed: T32_Cmd returned {e}"));
-    }
-
-    Ok(())
+    with_channel(|c| c.execute_command(&cmd)).map_err(|e| format!("TRACE32 command failed: {e}"))
 }
 
 pub fn t32_fnc(fnc: String) -> Result<String, String> {
-    let fnc = CString::new(fnc).expect("CString::new failed");
-
-    let buffer_size: u32 = 1024;
-    let mut buffer: Vec<u8> = vec![0u8; buffer_size as usize];
-    let mut result_type: u32 = 0;
-
-    let e = unsafe {
-        t32::T32_ExecuteFunction(
-            fnc.as_ptr(),
-            buffer.as_mut_ptr() as *mut c_char,
-            buffer_size,
-            &mut result_type,
-        )
-    };
-    if e != 0 {
-        return Err(format!(
-            "TRACE32 function failed: T32_ExecuteFunction returned {e}"
-        ));
-    }
-
-    let result = unsafe { CStr::from_ptr(buffer.as_ptr() as *const c_char) }
-        .to_string_lossy()
-        .into_owned();
-
-    Ok(result)
+    let (value, _result_type) = with_channel(|c| c.execute_function(&fnc))
+        .map_err(|e| format!("TRACE32 function failed: {e}"))?;
+    Ok(value)
 }
