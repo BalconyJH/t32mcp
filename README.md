@@ -6,7 +6,7 @@
 [![asciicast](https://asciinema.org/a/BSZGeOKfzWOMpVFN.svg)](https://asciinema.org/a/BSZGeOKfzWOMpVFN)
 
 **Questions & Feedback**:
-We would love to get your feedback and improvement suggestions for our MCP implementation. For questions, feedback and help, please refer to the [contributing guidelines](./CONTRIBUTING.md).
+We would love to get your feedback and improvement suggestions for our MCP implementation. For questions, feedback and help, please refer to the [contribution guidelines](./CONTRIBUTING.md).
 
 ## Table of Contents
 1. [Files overview](#files-overview)
