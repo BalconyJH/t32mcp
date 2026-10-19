@@ -16,10 +16,14 @@ use std::ptr;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
+pub mod artifacts;
 pub mod catalog;
 pub mod inspection;
 pub mod peripheral_views;
 pub mod peripherals;
+
+#[cfg(any(windows, test))]
+mod windows_paths;
 
 // Vendor builds can use global or thread-local state. Serialize native calls
 // and select this thread's channel explicitly for either configuration.
