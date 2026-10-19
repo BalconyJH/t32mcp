@@ -21,6 +21,7 @@ pub mod catalog;
 pub mod inspection;
 pub mod peripheral_views;
 pub mod peripherals;
+pub mod snapshot;
 
 #[cfg(any(windows, test))]
 mod windows_paths;
