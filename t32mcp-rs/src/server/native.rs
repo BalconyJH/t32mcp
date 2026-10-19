@@ -42,7 +42,7 @@ impl T32 {
 impl T32 {
     #[tool(
         name = "doctor",
-        description = "Diagnose the configured local TRACE32 endpoint with one lazy connection attempt, independent status queries and optional PER.FILENAME() metadata detection. A filename does not prove PER read support. Returns structured stages, native errors, capability provenance and hints even when PowerView is absent. Never retries, halts, resets, scans ports, loads PER files or probes target memory. Native calls still have no hard timeout.",
+        description = "Diagnose the configured local TRACE32 endpoint with one lazy connection attempt, independent status queries and optional PER.FILENAME() metadata detection. --target-config declarations take precedence; disabled PER is not probed. A filename does not prove PER read support. Returns structured stages, native errors, capability provenance and hints even when PowerView is absent. Never retries, halts, resets, scans ports, loads PER files or probes target memory. Native calls still have no hard timeout.",
         annotations(read_only_hint = true, destructive_hint = false)
     )]
     async fn doctor(&self) -> Result<CallToolResult, String> {
@@ -51,7 +51,7 @@ impl T32 {
         Ok(CallToolResult::structured(diagnostics::doctor(
             self.options.port,
             connection,
-            t32mcp::capabilities::PerSupport::Auto,
+            self.options.target_config.per_support,
         )))
     }
 
@@ -64,6 +64,11 @@ impl T32 {
         Parameters(request): Parameters<peripherals::ReadPerRegistersRequest>,
     ) -> Result<CallToolResult, String> {
         request.validate()?;
+        if let Err(error) = self.options.target_config.per_support.require_per() {
+            return Ok(CallToolResult::structured(
+                peripherals::configured_unavailable(&request, &error)?,
+            ));
+        }
         let _operation = OPERATION_LOCK.lock().await;
         let result = match self.ensure_inspection_connection_once() {
             Ok(()) => peripherals::read_registers(&request)?,
@@ -81,6 +86,11 @@ impl T32 {
         Parameters(request): Parameters<peripheral_views::ReadPerViewsRequest>,
     ) -> Result<CallToolResult, String> {
         request.validate()?;
+        if let Err(error) = self.options.target_config.per_support.require_per() {
+            return Ok(CallToolResult::structured(
+                peripheral_views::configured_unavailable(&request, &error),
+            ));
+        }
         let _operation = OPERATION_LOCK.lock().await;
         let result = match self.ensure_inspection_connection_once() {
             Ok(()) => peripheral_views::read_views(&request)?,

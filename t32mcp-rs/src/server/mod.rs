@@ -154,6 +154,7 @@ mod tests {
     fn options(native_tools: bool, read_only: bool, unlock_all_tools: bool) -> T32Options {
         T32Options {
             native_tools,
+            target_config: t32mcp::capabilities::TargetConfig::default(),
             unlock_all_tools,
             read_only,
             skills_base: "unused".to_string(),

@@ -4,12 +4,14 @@
 use rand::RngExt;
 use std::env;
 use std::path::PathBuf;
+use t32mcp::capabilities::TargetConfig;
 
 #[derive(Debug, Clone)]
 pub(crate) struct T32Options {
     pub unlock_all_tools: bool,
     pub read_only: bool,
     pub native_tools: bool,
+    pub target_config: TargetConfig,
     pub skills_base: String,
     pub artifacts_base: PathBuf,
     pub port: u16,
@@ -45,6 +47,7 @@ pub(crate) fn parse_args(args: impl IntoIterator<Item = String>) -> Result<CliAc
         unlock_all_tools: false,
         read_only: false,
         native_tools: false,
+        target_config: TargetConfig::default(),
         skills_base: "".to_string(),
         artifacts_base: PathBuf::new(),
         port: 20000,
@@ -59,6 +62,13 @@ pub(crate) fn parse_args(args: impl IntoIterator<Item = String>) -> Result<CliAc
             "--t32chat" => options.unlock_all_tools = true,
             "--native-tools" => options.native_tools = true,
             "--read-only" => options.read_only = true,
+            "--target-config" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--target-config requires a JSON file".to_string())?;
+                options.target_config =
+                    TargetConfig::load(std::path::Path::new(path.trim_matches('"')))?;
+            }
             "--skills" => {
                 let base = args
                     .next()
@@ -162,6 +172,7 @@ pub(crate) fn print_help() {
   --skills DIR     Skills base directory (default: %APPDATA%/TRACE32/skills)
   --artifacts DIR  Local evidence directory (default: %LOCALAPPDATA%/t32mcp/evidence)
   --native-tools   Enable optional native inspection and evidence tools
+  --target-config FILE  Optional JSON capability declarations for this session
   --t32chat        Unlocks execute_practice tool independently of --native-tools
   --read-only      Hide script execution and abort tools (overrides --t32chat)
   --version       Print version number
@@ -169,6 +180,7 @@ pub(crate) fn print_help() {
 
 Default MCP surface contains three generic PRACTICE skill tools.
 Connection is local and lazy. --read-only disables execution, not MMIO side effects.
+Target configuration declares capabilities; it never configures or controls the board.
 Polling deadlines and pipe acceptance do not interrupt blocked native API calls.
 Evidence is written only when save_artifact=true. Old artifacts are never overwritten."
     );
@@ -190,6 +202,10 @@ mod tests {
         assert!(!options.native_tools);
         assert!(!options.unlock_all_tools);
         assert!(!options.read_only);
+        assert_eq!(
+            options.target_config.per_support,
+            t32mcp::capabilities::PerSupport::Auto
+        );
         assert_eq!(options.port, 20000);
         assert!(options.skills_base.is_empty());
         assert!(options.artifacts_base.as_os_str().is_empty());
@@ -218,6 +234,8 @@ mod tests {
             vec!["--artifacts", ""],
             vec!["--artifacts", "relative"],
             vec!["--artifacts", "a\0b"],
+            vec!["--target-config"],
+            vec!["--target-config", ""],
             vec!["--unknown"],
             vec!["--native-tools=true"],
         ] {
