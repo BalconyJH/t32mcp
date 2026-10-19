@@ -18,6 +18,7 @@ use std::time::Duration;
 
 pub mod artifacts;
 pub mod catalog;
+pub mod image_verify;
 pub mod inspection;
 pub mod peripheral_views;
 pub mod peripherals;
