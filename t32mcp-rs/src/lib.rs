@@ -17,6 +17,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 pub mod inspection;
+pub mod peripheral_views;
 pub mod peripherals;
 
 // Vendor builds can use global or thread-local state. Serialize native calls
