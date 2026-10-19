@@ -42,6 +42,6 @@ SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
 SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
-path = "docs/**"
+path = ["pyproject.toml", "docs/**"]
 SPDX-FileCopyrightText = "2026 t32mcp contributors"
 SPDX-License-Identifier = "Apache-2.0"

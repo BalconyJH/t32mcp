@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Lauterbach GmbH
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "t32mcp"
+dynamic = ["version"]
+description = "Local TRACE32 MCP server backed by the native Rust executable"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0 AND LicenseRef-Lauterbach-RemoteAPI"
+license-files = [
+    "LICENSES/Apache-2.0.txt",
+    "LICENSES/LicenseRef-Lauterbach-RemoteAPI.txt",
+]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Programming Language :: Rust",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+]
+
+[tool.maturin]
+manifest-path = "t32mcp-rs/Cargo.toml"
+bindings = "bin"
+locked = true
+include = [
+    { path = "t32mcp-rs/lib/**/*", format = "sdist" },
+    { path = "t32mcp-rs/Cargo.lock", format = "sdist" },
+    { path = "t32mcp-rs/rust-toolchain.toml", format = "sdist" },
+    { path = "docs/*.md", format = "sdist" },
+]
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "t32mcp-rs/Cargo.toml" },
+    { file = "t32mcp-rs/Cargo.lock" },
+    { file = "t32mcp-rs/build.rs" },
+    { file = "t32mcp-rs/rust-toolchain.toml" },
+    { file = "t32mcp-rs/.cargo/config.toml" },
+    { file = "t32mcp-rs/src/**/*.rs" },
+    { file = "t32mcp-rs/lib/**/*" },
+]
