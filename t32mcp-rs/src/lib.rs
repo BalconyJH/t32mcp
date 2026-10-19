@@ -16,6 +16,8 @@ use std::ptr;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
+pub mod inspection;
+
 // Vendor builds can use global or thread-local state. Serialize native calls
 // and select this thread's channel explicitly for either configuration.
 static API_LOCK: Mutex<()> = Mutex::new(());
