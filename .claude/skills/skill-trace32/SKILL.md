@@ -1,59 +1,131 @@
 ---
 name: trace32
-description: Embedded Software Debugging with Lauterbach TRACE32
+description: Debug embedded targets with Lauterbach TRACE32 and t32mcp using documented PRACTICE skills, or advertised native tools for batch inspection and evidence collection.
 ---
 
 # Embedded Software Debugging with Lauterbach TRACE32
 
-You have access to set of `*.cmm` scripts written in Lauterbach's scripting language PRACTICE that can be executed in the TRACE32 debugger.
-To execute them, use Lauterbach's official MCP server `t32mcp`.
+Use the configured `t32mcp` server and the script reference in this file.
+The default interface has three generic tools: `execute_practice_skill`,
+`collect_practice_skill_response` and `abort_practice_skill`. Capabilities are
+provided by documented PRACTICE scripts, not by assuming extra MCP endpoints.
 
-**Important**: The scripts are only visible to the MCP server. Do not try to read their contents. Expect that they will be empty.
+**Do not read `.cmm` contents or parse `scripts/` directories.** Use the
+arguments documented here. If the connected server advertises
+`list_practice_skills`, it can confirm installed names without reading scripts.
 
-## Build your strategy around hypothesis
+## Build your strategy around a hypothesis
 
-Use the following strategy to help with debugging:
+Formulate one concrete hypothesis and choose the smallest relevant observation
+set. Inspect the server's tool list before choosing an operation. With the
+default interface, use `get_state.cmm` to observe target state. If advertised,
+`doctor` or `get_debugger_status` can provide native session diagnostics.
+A powered board does not imply a listening or attached PowerView session.
 
-1. Formulate a hypothesis of what could be the problem
-2. Test this hypothesis using the the provided scripts
+Inspection does not authorize halt/resume, stepping, reset, flash, image/PER
+loading, writes, breakpoint changes or recovery. Do not stop a running target
+merely to make a read succeed. Run-control and mutation scripts below require
+authorization for that action. Reset remains the user's responsibility;
+after an authorized state change, observe the state again.
 
-Keep the answers relatively short - don't try too much, one hypothesis at a time.
-If something is unclear, get back to the user.
+A failed observation is not zero or proof of equality. Preserve errors,
+truncation, partial coverage and unattempted work. Keep reports local unless
+sharing is explicitly requested. Separate offline tests, live refusal checks
+and successful hardware reads; a prior session's state is not current evidence.
 
-## Control and Observe Dynamic State
+## Keep target configuration session-specific
 
-Since debugging is a highly dynamic activity, you need to be able to control and observe the target system's state.
+An advertised MCP tool confirms an interface, not hardware support. Do not
+carry a project's CPU selection, SWD/JTAG setup, memory map, register names,
+symbols, access modes or PER definition into another session as defaults.
+Use current-session configuration and evidence; CPU identity alone is not a
+capability test.
 
-1. While you are reasoning, the target system should be in a halted state.
-2. After reasoning, setup any traces you might need.
-3. Start the execution for a specific amount of time.
+PER is chip/configuration-dependent and is not supported everywhere. Prefer
+user-supplied session configuration; `--target-config` can declare `per_support`
+as `auto`, `supported` or `unsupported`. `doctor` separates these declarations
+from automatic `PER.FILENAME()` metadata observations. A filename confirms
+only a selected definition, not working or safe register reads. An unavailable
+metadata query remains unknown, not unsupported; never override an explicit
+unsupported declaration by probing.
 
-### Examine the system from various perspectives
+Use a compatible current-session definition and understood paths before PER
+reads; otherwise report what information is missing. Do not test support with
+a bulk/root PER read, load a definition automatically or substitute guessed
+MMIO addresses. Continue other independently supported observations.
 
-With the provided scripts, you can control and examine the system’s state from various perspectives.
-Those perspectives help in identifying the suitable script. At the moment, the following perspectives are available:
+## Execute a documented script
 
-* **Core:** Executes instructions
-* **System on Chip**: Contains the cores as well as peripheral devices (e.g. interrupt controllers) which can be common sources of bugs as well, especially in embedded systems
-* **Memory:** Stores information
-* **Software:** Enables humans to write large sequences of instructions, includes common concepts like functions, typically in high-level languages like C
-* **Operating System:** Ensures and simplifies dynamic runtime behavior of software through tasks, management routines etc.
+For example, observe target state through the default interface:
 
-There is no complete list of all possible perspectives.
-For each use case, you must determine the most appropriate one to apply.
+```json
+{
+  "skill_name": "trace32",
+  "script_name": "get_state.cmm",
+  "script_args": {}
+}
+```
 
-If you don't see anything applicable, get back to the user.
+Pass these arguments to `execute_practice_skill`. The server needs `--skills`
+pointing to a root that contains `skill-trace32/scripts`. The tool's skill name
+is `trace32`, without the directory's `skill-` prefix; keep `.cmm` in the script
+name. For another installed skill, use its documented name or, when available,
+the name returned by `list_practice_skills`.
 
-### Setup and Record Traces
+If output starts with `<NOT FINISHED>`, call
+`collect_practice_skill_response` with `{}` for the same invocation; do not
+restart the script to collect output. Preserve `<TRUNCATED>true</TRUNCATED>`
+as incomplete evidence. Stop polling at a task-appropriate deadline and report
+a still-active script rather than spin indefinitely.
 
-Setting up traces is highly related with the hypothesis strategy.
+`abort_practice_skill` with `{}` sends `END` to PRACTICE. Use it only for an
+authorized cancellation, not to acquire the debugger from another client.
+It is not a target halt or reset. `--read-only` hides execution and abort;
+without native extensions, only collection remains. Report unavailable
+observations rather than bypassing the selected mode. Unrestricted
+`execute_practice` requires explicit `--t32chat` and is not the default path.
 
-1. Think first about which information will be interesting. Setup traces for those information with the appropriate scripts
-2. Let the system run for a specific amount of time
+## Optional local native tools
 
-After collecting the response, you can see the ordered trace information including timestamps.
+The local `--native-tools` startup flag exposes 14 additional tools. These are
+an opt-in local extension, not the repository's default or an upstream-approved
+extension pattern. Use them only when the connected server advertises them;
+do not enable another mode or restart the debugger merely to complete a query.
+When available, batch related observations instead of one call per item.
+
+| Need | Advertised tools | Reference |
+| --- | --- | --- |
+| Session health, registers, expressions, symbols, memory, windows, polling | `doctor`, `get_debugger_status`, `read_registers`, `evaluate_expressions`, `lookup_symbols`, `read_memory`, `read_debugger_window`, `wait_for_condition` | [Native inspection](references/native-inspection.md) |
+| Several PER registers/bitfields or selected subtrees | `read_per_registers`, `read_per_views` | [Batch PER inspection](references/peripheral-inspection.md) |
+| Named observations, offline comparison, BIN/HEX readback | `capture_snapshot`, `diff_snapshots`, `verify_image` | [Evidence workflows](references/evidence-workflows.md) |
+| Installed script names without reading scripts | `list_practice_skills` | Use advertised schema; arguments are `{}` |
+
+Read only the relevant reference before using these tools. Example addresses,
+symbols and PER titles are not an approved map for the current target.
+
+- Native states are `0` down, `1` halted, `2` stopped and `3` running. Errors or
+  unrecognized states are unknown, not stopped.
+- PER reads and image verification require an already halted/stopped target. Never
+  bypass a refusal with expressions, raw PRACTICE or other memory/script helpers.
+- PER batches require explicit `acknowledge_side_effects: true` for trusted
+  definitions and understood selections. PER logic can execute writes; neither
+  `--read-only` nor a stopped target is a hardware sandbox.
+- This server implements running-target native memory reads only with explicit
+  `access: "arm_dap"` and `dual_port: true` on compatible hardware with a verified
+  memory map. ARM DAP is not a portable default or fallback for other chips.
+  Generic dual-port access can use StopAndGo; do not substitute another mode.
+- Batches are sequential and non-atomic. Matching sampled states do not rule
+  out transient changes, DMA writes or another client's actions. Deadlines
+  cannot cancel blocked native calls; do not silently retry failed observations.
+- Save artifacts only when requested (`save_artifact: true`); snapshots can
+  contain raw memory and secrets. Running-state refusals do not verify
+  successful stopped-target PER or image reads.
 
 ## Script Reference
+
+Examples below are `script_args`, not top-level tool inputs. Scripts without
+listed arguments use `script_args: {}`. Every script must remain documented
+here when its implementation changes.
 
 The `scripts/` directory contains a set of scripts implementing basic debugging functionality.
 Some scripts can be called with arguments.
@@ -90,6 +162,9 @@ Example:
 
 ```json
 { }
+```
+
+```json
 { "wait": "1000." }
 ```
 
@@ -143,7 +218,13 @@ Example:
 
 ```json
 { }
+```
+
+```json
 { "address": "0x1000" }
+```
+
+```json
 { "address": "main" }
 ```
 
@@ -151,15 +232,15 @@ The line which the PC currently stands on is highlighted by underscores.
 
 #### `core_step.cmm`
 
-Execute `amount` of core instruction.
-Parameter is optional. If not step, do just one step.
+Execute `count` core instructions.
+The parameter is optional; omit it to execute one instruction.
 **IMPORTANT: Decimal values require a trailing dot, e.g. `12.`.**
 
 ```json
 {
   "type": "object",
   "properties": {
-    "count": { "type": "string" },
+    "count": { "type": "string" }
   },
   "required": []
 }
@@ -169,6 +250,9 @@ Examples:
 
 ```json
 { }
+```
+
+```json
 { "count": "10." }
 ```
 
@@ -234,7 +318,7 @@ Example:
 { "address": "0x1000" }
 ```
 
-####  `mem_set_breakpoint.cmm`
+#### `mem_set_breakpoint.cmm`
 
 Set a breakpoint at address `address`, `type` indicates whether it triggers when the address is accessed for read access, write access or execution.
 `address` can also be a symbol (e.g. `main` or `static_var`).
@@ -254,7 +338,13 @@ Example:
 
 ```json
 { "address": "0x100", "type": "R" }
+```
+
+```json
 { "address": "static_var", "type": "W" }
+```
+
+```json
 { "address": "main", "type": "X" }
 ```
 
@@ -278,7 +368,13 @@ Example:
 
 ```json
 { "address": "0x100", "type": "R" }
+```
+
+```json
 { "address": "static_var", "type": "W" }
+```
+
+```json
 { "address": "main", "type": "X" }
 ```
 
@@ -319,7 +415,13 @@ Example:
 
 ```json
 { }
+```
+
+```json
 { "address": "0x1000" }
+```
+
+```json
 { "address": "main" }
 ```
 
@@ -343,20 +445,23 @@ Example:
 
 ```json
 { "wildcard": "*main"}
+```
+
+```json
 { "wildcard": "static_var"}
 ```
 
 
 #### `sw_step_over.cmm`
 
-Step over the next `amount` of lines. If `amount` is not set, do one step.
+Step over the next `count` lines. Omit `count` to perform one step.
 **IMPORTANT: Decimal values require a trailing dot, e.g. `12.`.**
 
 ```json
 {
   "type": "object",
   "properties": {
-    "count": { "type": "string" },
+    "count": { "type": "string" }
   },
   "required": []
 }
@@ -366,6 +471,9 @@ Examples:
 
 ```json
 { }
+```
+
+```json
 { "count": "10." }
 ```
 
@@ -381,7 +489,7 @@ Returns the contents of `filename`.
 {
   "type": "object",
   "properties": {
-    "address": { "filename": "string" }
+    "filename": { "type": "string" }
   },
   "required": ["filename"]
 }
@@ -391,6 +499,9 @@ Example:
 
 ```json
 { "filename": "main.c" }
+```
+
+```json
 { "filename": "lib.h" }
 ```
 
@@ -413,7 +524,13 @@ Example:
 
 ```json
 { "pattern": "main"}
+```
+
+```json
 { "pattern": "static_var"}
+```
+
+```json
 { "pattern": "&&"}
 ```
 
@@ -436,16 +553,10 @@ Example:
 
 ```json
 { "file": "main.c", "line": "13." }
+```
+
+```json
 { "file": "lib.h", "line": "10." }
 ```
 
 **IMPORTANT: Decimal values require a trailing dot, e.g. `12.`.**
-
-## General instructions
-
-### Refer to the user to reset the target
-
-The above scripts do NOT provide the means to reset the target by yourself.
-Instead, get back to the user.
-It lies in their responsibility to bring the system back to a fresh state.
-Ensure afterwards that you are aware of the state the system is in.
