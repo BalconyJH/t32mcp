@@ -37,6 +37,9 @@ async fn main() -> Result<()> {
     if options.skills_base.is_empty() {
         options.skills_base = cli::default_skills_base().map_err(anyhow::Error::msg)?;
     }
+    if options.artifacts_base.as_os_str().is_empty() {
+        options.artifacts_base = cli::default_artifacts_base();
+    }
 
     // Stdout belongs exclusively to the MCP stdio transport.
     tracing_subscriber::fmt()

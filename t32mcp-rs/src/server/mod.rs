@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Lauterbach GmbH
 // SPDX-License-Identifier: Apache-2.0
 
+mod native;
 mod output;
 mod practice;
 
@@ -38,6 +39,9 @@ impl T32 {
             if options.unlock_all_tools {
                 tool_router += Self::raw_practice_router();
             }
+        }
+        if options.native_tools {
+            tool_router += Self::native_router();
         }
         Self {
             tool_router,
@@ -93,6 +97,14 @@ impl T32 {
         }
         Ok(())
     }
+
+    fn ensure_inspection_connection_once(&self) -> Result<(), String> {
+        if !CONNECTED.load(Ordering::Relaxed) {
+            t32_connect(self.options.port)?;
+            CONNECTED.store(true, Ordering::Relaxed);
+        }
+        Ok(())
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -120,12 +132,32 @@ pub(crate) async fn shutdown() {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+    use std::path::PathBuf;
 
-    fn options(read_only: bool, unlock_all_tools: bool) -> T32Options {
+    const NATIVE_TOOLS: [&str; 14] = [
+        "capture_snapshot",
+        "diff_snapshots",
+        "doctor",
+        "evaluate_expressions",
+        "get_debugger_status",
+        "list_practice_skills",
+        "lookup_symbols",
+        "read_debugger_window",
+        "read_memory",
+        "read_per_registers",
+        "read_per_views",
+        "read_registers",
+        "verify_image",
+        "wait_for_condition",
+    ];
+
+    fn options(native_tools: bool, read_only: bool, unlock_all_tools: bool) -> T32Options {
         T32Options {
+            native_tools,
             unlock_all_tools,
             read_only,
             skills_base: "unused".to_string(),
+            artifacts_base: PathBuf::new(),
             port: 20000,
             pipe_name: "test-unused".to_string(),
         }
@@ -142,7 +174,7 @@ mod tests {
 
     #[test]
     fn default_router_contains_exactly_the_three_generic_tools() {
-        let server = T32::new(options(false, false));
+        let server = T32::new(options(false, false, false));
         let expected = BTreeSet::from([
             "abort_practice_skill".to_string(),
             "collect_practice_skill_response".to_string(),
@@ -153,10 +185,17 @@ mod tests {
 
     #[test]
     fn router_mode_matrix_preserves_explicit_opt_in_and_read_only() {
-        for (read_only, unlock_all_tools) in
-            [(false, false), (false, true), (true, false), (true, true)]
-        {
-            let server = T32::new(options(read_only, unlock_all_tools));
+        for (native_tools, read_only, unlock_all_tools) in [
+            (false, false, false),
+            (false, false, true),
+            (false, true, false),
+            (false, true, true),
+            (true, false, false),
+            (true, false, true),
+            (true, true, false),
+            (true, true, true),
+        ] {
+            let server = T32::new(options(native_tools, read_only, unlock_all_tools));
             let mut expected = BTreeSet::from(["collect_practice_skill_response".to_string()]);
             if !read_only {
                 expected.insert("execute_practice_skill".to_string());
@@ -165,11 +204,17 @@ mod tests {
                     expected.insert("execute_practice".to_string());
                 }
             }
+            if native_tools {
+                expected.extend(NATIVE_TOOLS.iter().map(|name| name.to_string()));
+            }
             assert_eq!(
                 tools(&server),
                 expected,
-                "read_only={read_only}, t32chat={unlock_all_tools}"
+                "native_tools={native_tools}, read_only={read_only}, t32chat={unlock_all_tools}"
             );
+            for name in NATIVE_TOOLS {
+                assert_eq!(server.tool_router.has_route(name), native_tools);
+            }
             assert_eq!(
                 server.tool_router.has_route("execute_practice"),
                 unlock_all_tools && !read_only
