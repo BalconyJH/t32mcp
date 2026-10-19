@@ -16,6 +16,7 @@ use std::ptr;
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
+pub mod catalog;
 pub mod inspection;
 pub mod peripheral_views;
 pub mod peripherals;
