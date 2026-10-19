@@ -17,6 +17,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 pub mod artifacts;
+pub mod capabilities;
 pub mod catalog;
 pub mod image_verify;
 pub mod inspection;
