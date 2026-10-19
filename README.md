@@ -26,7 +26,8 @@ t32mcp/                                # this repository
 └── .claude/
     └── skills/
         └── skill-trace32/             # Accompanying Agent Skill
-            ├── SKILL.md               # MCP usage and script documentation
+            ├── SKILL.md               # Script reference and debugging workflow
+            ├── references/            # Optional native, PER and evidence guides
             └── scripts/
                 ├── <script-name>.cmm  # the "actual tools" implemented as PRACTICE scripts
                 └── ...
@@ -34,10 +35,46 @@ t32mcp/                                # this repository
 
 ## MCP server
 
+### Local enhancements and uv installation
+
+This local checkout preserves the three-tool PRACTICE interface by default and
+adds native-binary packaging for `uv tool`:
+
+```powershell
+uv tool install .
+t32mcp --skills "C:\path\to\skills"
+```
+
+Use your installed skills root. The server uses port `20000` unless `--port`
+selects the port configured in your own PowerView session.
+
+Source installation requires Rust, a native linker, and libclang. Installing a
+locally built wheel does not require a compiler. See
+[local installation](docs/installation.md) for prerequisites and wheel commands,
+and [local capabilities](docs/local-capabilities.md) for tool schemas, safety
+limits and verification. These are local changes; no package publication or
+remote release is required.
+
+Structured inspection, batch PER reads, snapshots and image readback checks
+remain available through the explicit `--native-tools` option. They are a local
+extension, not a change to the contribution policy: new upstream capabilities
+should normally be PRACTICE scripts documented in `SKILL.md`.
+
+An advertised tool is a server interface, not proof that the connected chip
+supports it. PER requires chip/session support and a compatible active
+definition; register names, memory maps, access modes and debugger windows also
+depend on the target configuration. No test-board CPU, PER file, address map or
+debug-port setup is installed or selected by default.
+
+Optional `--target-config FILE` accepts a session-specific JSON declaration,
+such as `{"per_support":"unsupported"}`. Otherwise `doctor` uses conservative
+metadata detection, not register reads or a CPU compatibility table. See
+[capability configuration](docs/local-capabilities.md#session-capability-configuration).
+
 You can either download and use one of the prebuilt executables (if compatible) or build it yourself from source.
 For simplicity the rest of this README assumes the executable sits at `<your-path>/t32mcp/t32mcp` / `<your-path>\t32mcp\t32mcp.exe`.
 
-**Note:** Currently this MCP setup only works when the MCP server and TRACE32 are runninig on the same system. Specifically:
+**Note:** Currently this MCP setup only works when the MCP server and TRACE32 are running on the same system. Specifically:
 - the path to the MCP server executable needs to be accessible by the MCP client (your AI agent, e.g. Claude Code)
 - the MCP server executable needs to be able to communicate with TRACE32 via:
   1. the remote API (TCP by default)
@@ -63,22 +100,77 @@ The MCP server communicates with the MCP client via the `stdio` protocol.
 
 The executable should be called with the command-line parameter `--skills <path-to-skills>`. This points the MCP server to the root directory from which it loads the PRACTICE scripts `<path-to-skills>/skill-trace32/scripts/*.cmm`.
 
-There is one more, optional parameter: `--port`. It defaults to 20000 (the default port for the TRACE32 remote API). If you use a different port, provide it here.
+The optional `--port` parameter defaults to 20000 (the default port for the
+TRACE32 Remote API). If you use a different port, provide it here. Use `--help`
+for transport and local extension options.
 
 ### Tools
 
-The MCP server exposes three tools:
+The default interface contains only the three generic PRACTICE tools:
 
 1. `execute_practice_skill`: to execute a script
 2. `abort_practice_skill`: to cancel the current script
 3. `collect_practice_skill_response`: to get / poll the results of a running script
 
+Local extension modes are explicit:
+
+| Options | Tools exposed |
+| --- | --- |
+| Default | 3 PRACTICE tools |
+| `--t32chat` | 4: PRACTICE tools and unrestricted `execute_practice` |
+| `--native-tools` | 17: PRACTICE tools and 14 native extensions |
+| `--native-tools --t32chat` | 18 |
+| `--read-only` | 1: `collect_practice_skill_response` |
+| `--native-tools --read-only` | 15: collection and native extensions |
+
+`--read-only` suppresses execution and abort, including `execute_practice` when
+`--t32chat` is also supplied. To keep using native tools after updating an older
+local installation, add `--native-tools` to the MCP client's server arguments.
+The native tool names and schemas remain available in that opt-in mode.
+
+The 14 native extensions are:
+
+| Tool | Purpose |
+| --- | --- |
+| `doctor` | Structured endpoint/attachment/status diagnostics, including unavailable sessions |
+| `capture_snapshot` | Named observations with independent expectations and optional local evidence |
+| `diff_snapshots` | Offline comparison of saved snapshots, preserving unavailable/incompatible results |
+| `verify_image` | Bounded BIN/Intel HEX readback checks on an already halted/stopped target |
+| `get_debugger_status` | Target/PRACTICE state, CPU and software version |
+| `evaluate_expressions` | Ordered batch queries with native result types and individual errors |
+| `read_registers` | Batch register reads with full-width hexadecimal values |
+| `read_per_registers` | Up to 64 PER register/bitfield paths with independent native results |
+| `read_per_views` | Up to 16 selected PER subtrees with byte-based pagination |
+| `read_memory` | Bounded memory regions, hexdump and optional expected-byte comparison |
+| `lookup_symbols` | Exact loaded-symbol address, size and reserved native metadata |
+| `read_debugger_window` | Paginated register, frame, locals, breakpoint or task text |
+| `wait_for_condition` | Deadline-based observation with samples, attempts and elapsed time |
+| `list_practice_skills` | Discover script names without reading or running them |
+
+`--read-only` is not a hardware sandbox:
+MMIO reads, target-specific expression functions and executable PER definitions
+can have side effects, including writes from PER logic.
+Nothing connects to the target until a tool actually needs the Remote API.
+Inspection tools do not require a skills directory; skill discovery/execution
+do.
+
+See [evidence workflows](docs/evidence-workflows.md) for the new tools. Evidence
+persistence is opt-in (`save_artifact=true`) and `--artifacts DIR` selects its
+local directory. Existing evidence is never overwritten or automatically deleted.
+
+See [batch PER inspection](docs/peripheral-inspection.md) for multi-register and
+multi-subtree examples. Both PER tools require explicit side-effect
+acknowledgement and an already halted/stopped target; they never auto-halt or
+modify the shared Watch list. Neither native extensions nor `--t32chat` are
+required for the default script workflow.
 
 ## Agent skills
 
-Our MCP server only provides the basic interface to TRACE32.
-We then rely on the "skills" functionality to explain how to use these MCP tools.
-Currently, all instructions and documentation are in the `SKILL.md` file.
+The skill documents the default PRACTICE workflow and every script's purpose,
+arguments and examples directly in `SKILL.md`. Its `references/` directory
+contains optional native-inspection, batch-PER and evidence-workflow guides,
+used only when the connected server advertises those tools. Copy the complete
+skill folder, not just `SKILL.md`.
 
 ### Scripts
 
@@ -93,7 +185,8 @@ WinPrint.Frame
 ENDDO
 ```
 
-**Note:** Every script and its usage should be documented in the `SKILL.md` file!
+**Note:** Document every script directly in `SKILL.md`; keep script changes and
+their documentation consistent, as required by [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## AI agent configuration
 
@@ -143,24 +236,11 @@ Note: to remove the MCP server from Claude Code again, use `claude mcp remove t3
 
 ## Intended agent behavior
 
-If you ask your agent to use TRACE32 to set a register value on your target, it should automatically read the `skill-trace32` skill. In the `SKILL.md` file it will find:
+If you ask your agent to use TRACE32 to set a register value on your target, it
+should read the `trace32` skill. For this authorized mutation, `SKILL.md`
+contains:
 
 ````md
-You have access to a set of `*.cmm` scripts written in Lauterbach's scripting language PRACTICE that can be executed in the TRACE32 debugger.
-To execute them, use Lauterbach's official MCP server `t32mcp`.
-
-...
-
-## Script Reference
-
-...
-
-### Core Perspective
-
-#### `core_get_registers.cmm`
-
-Access the core's current registers.
-
 #### `core_set_register.cmm`
 
 Set core register `register` to value `value`.
@@ -206,5 +286,6 @@ In the meantime **you can have our TRACE32 AI Assistant help you write your own 
 
 # License
 
-This project is licensed under the Apache License, Version 2.0. See the
-[LICENSE](LICENSE) file for details.
+The server code is licensed under the Apache License, Version 2.0; see
+[Apache-2.0](LICENSES/Apache-2.0.txt). The linked TRACE32 Remote API has
+[separate licensing terms](LICENSES/LicenseRef-Lauterbach-RemoteAPI.txt).
