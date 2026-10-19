@@ -1,53 +1,132 @@
-import logging
+# SPDX-FileCopyrightText: 2026 Lauterbach GmbH
+# SPDX-License-Identifier: Apache-2.0
+
+import re
+import subprocess
+
+import pytest
+from conftest import DEFAULT_TOOLS, NATIVE_TOOLS, READ_ONLY_TOOLS
 from fastmcp import Client
-from mcp.types import Tool
 
-LOGGER = logging.getLogger("mcp")
+TOOL_MODES = [
+    ([], DEFAULT_TOOLS),
+    (["--t32chat"], DEFAULT_TOOLS | {"execute_practice"}),
+    (["--read-only"], READ_ONLY_TOOLS),
+    (["--t32chat", "--read-only"], READ_ONLY_TOOLS),
+    (["--read-only", "--t32chat"], READ_ONLY_TOOLS),
+    (["--native-tools"], DEFAULT_TOOLS | NATIVE_TOOLS),
+    (
+        ["--native-tools", "--t32chat"],
+        DEFAULT_TOOLS | NATIVE_TOOLS | {"execute_practice"},
+    ),
+    (["--native-tools", "--read-only"], READ_ONLY_TOOLS | NATIVE_TOOLS),
+    (["--native-tools", "--t32chat", "--read-only"], READ_ONLY_TOOLS | NATIVE_TOOLS),
+    (["--read-only", "--t32chat", "--native-tools"], READ_ONLY_TOOLS | NATIVE_TOOLS),
+]
 
-async  def test_server_connection(local_mcp_server: Client, remote_mcp_server: Client):
-    def print_server_info(info, debug=False):
-        log = LOGGER.debug if debug else LOGGER.info
-        log(f"{info.name} (v{info.version})")
-        log(f"{info.title}")
-        log(f"{info.websiteUrl}")
 
+async def test_server_connection(local_mcp_server: Client, remote_mcp_server: Client):
     async with local_mcp_server:
-        LOGGER.info("Connected to local server")
         local_info = local_mcp_server.initialize_result.serverInfo
-        print_server_info(local_info, debug=True)
-
     async with remote_mcp_server:
-        LOGGER.info("Connected to remote server")
         remote_info = remote_mcp_server.initialize_result.serverInfo
-        print_server_info(remote_info, debug=True)
+    assert local_info == remote_info
+    assert local_info.name == "t32mcp"
+    assert local_info.version
 
-    assert(local_info == remote_info)
-    print_server_info(local_info)
 
 async def test_list_tools(local_mcp_server: Client, remote_mcp_server: Client):
-    local_tools: list[Tool] = []
-    remote_tools: list[Tool] = []
-
     async with local_mcp_server:
-        LOGGER.info("Connected to local server")
-        server = local_mcp_server
-        tools = await server.list_tools()
-        for tool in tools:
-            LOGGER.debug(f"Tool detected: {tool.name}")
-            local_tools.append(tool)
-
+        local_tools = {tool.name: tool for tool in await local_mcp_server.list_tools()}
     async with remote_mcp_server:
-        LOGGER.info("Connected to remote server")
-        server = remote_mcp_server
-        tools = await server.list_tools()
-        for tool in tools:
-            LOGGER.debug(f"Tool detected: {tool.name}")
-            remote_tools.append(tool)
+        remote_tools = {
+            tool.name: tool for tool in await remote_mcp_server.list_tools()
+        }
+    assert set(local_tools) == DEFAULT_TOOLS
+    assert local_tools == remote_tools
+    for tool in local_tools.values():
+        assert tool.description, tool.name
+        assert tool.inputSchema["type"] == "object", tool.name
 
-    assert(len(local_tools) == len(remote_tools))
-    assert(len(local_tools) == 3)
-    local_tools.sort(key=lambda t: t.description or "")
-    remote_tools.sort(key=lambda t: t.description or "")
-    for (tool, duplicate) in zip(local_tools, remote_tools):
-        assert(tool == duplicate)
-        LOGGER.info(f"Tool: {tool.name}")
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_tools"),
+    TOOL_MODES,
+)
+async def test_tool_visibility(mcp_client_factory, arguments, expected_tools):
+    async with mcp_client_factory(*arguments) as client:
+        assert {tool.name for tool in await client.list_tools()} == expected_tools
+
+
+@pytest.mark.parametrize(("arguments", "expected_tools"), TOOL_MODES)
+async def test_http_tool_visibility(http_mcp_client_factory, arguments, expected_tools):
+    with http_mcp_client_factory(*arguments) as client:
+        async with client:
+            assert {tool.name for tool in await client.list_tools()} == expected_tools
+
+
+async def test_native_schemas_match_across_transports(
+    native_mcp_server, http_mcp_client_factory
+):
+    async with native_mcp_server as client:
+        local_tools = {tool.name: tool for tool in await client.list_tools()}
+    with http_mcp_client_factory("--native-tools") as client:
+        async with client:
+            remote_tools = {tool.name: tool for tool in await client.list_tools()}
+    assert set(local_tools) == DEFAULT_TOOLS | NATIVE_TOOLS
+    assert local_tools == remote_tools
+
+
+@pytest.mark.parametrize("argument", ["--help", "-h", "--version"])
+def test_cli_information_does_not_require_debugger(server_executable, argument):
+    result = subprocess.run(
+        [server_executable, argument],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert re.search(r"t32mcp v\d+\.\d+\.\d+", result.stdout)
+    if argument != "--version":
+        for option in (
+            "--port",
+            "--skills",
+            "--http",
+            "--native-tools",
+            "--read-only",
+            "--t32chat",
+            "--artifacts",
+        ):
+            assert option in result.stdout
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--unknown-option"],
+        ["--port"],
+        ["--port", "not-a-port"],
+        ["--port", "65536"],
+        ["--port", "0"],
+        ["--http"],
+        ["--http", "invalid"],
+        ["--skills"],
+        ["--artifacts"],
+        ["--artifacts", "relative"],
+    ],
+)
+def test_invalid_cli_arguments_fail_cleanly(server_executable, arguments):
+    result = subprocess.run(
+        [server_executable, *arguments],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert output.strip()
+    assert "panicked at" not in output
