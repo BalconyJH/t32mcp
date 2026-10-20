@@ -67,7 +67,10 @@ async def fake_run(args, **kwargs):
         return client
 
     report = await probe.run(args, client_factory=factory)
-    assert transports[0].args == ["--native-tools", "--read-only", "--port", "1"]
+    assert transports[0].args == [
+        "--execution-policy", "scripts", "--native-tools",
+        "--read-only", "--port", "1",
+    ]
     assert client.closed
     return report, client
 
@@ -169,8 +172,9 @@ async def test_register_error_does_not_hide_unread_requested_symbols(tmp_path):
     assert client.calls[-1] == ("get_debugger_status", {})
 
 
-async def test_unsafe_tool_exposure_stops_before_any_observations(tmp_path):
-    client = FakeClient(tools=TOOLS | {"execute_practice"})
+@pytest.mark.parametrize("unsafe_tool", sorted(probe.FORBIDDEN_TOOLS))
+async def test_unsafe_tool_exposure_stops_before_any_observations(tmp_path, unsafe_tool):
+    client = FakeClient(tools=TOOLS | {unsafe_tool})
     with pytest.raises(RuntimeError, match="unsafe tools"):
         await probe.run(arguments(tmp_path), client_factory=lambda _: client)
     assert not client.calls

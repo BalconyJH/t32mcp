@@ -162,6 +162,9 @@ async def fake_run(args, **kwargs):
     assert json.loads(args.output.read_text(encoding="utf-8")) == report
     assert "--read-only" in transport_seen[0].args
     assert "--native-tools" in transport_seen[0].args
+    assert transport_seen[0].args[
+        transport_seen[0].args.index("--execution-policy") + 1
+    ] == "scripts"
     assert transport_seen[0].args[transport_seen[0].args.index("--port") + 1] == "1"
     return report, client, transport_seen[0]
 
@@ -298,10 +301,11 @@ async def test_observed_state_change_fails(tmp_path):
     assert report["passed"] is False
 
 
-async def test_execution_tool_exposure_stops_before_debugger_queries(tmp_path):
+@pytest.mark.parametrize("unsafe_tool", sorted(probe.FORBIDDEN_TOOLS))
+async def test_execution_tool_exposure_stops_before_debugger_queries(tmp_path, unsafe_tool):
     report, client, _ = await fake_run(
         arguments(tmp_path),
-        tools=TOOLS | {"execute_practice"},
+        tools=TOOLS | {unsafe_tool},
     )
     assert report["status"] == "fail"
     assert report["checks"]["read_only_tools"]["status"] == "fail"

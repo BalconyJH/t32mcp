@@ -345,6 +345,9 @@ struct CapturedItem {
 struct SnapshotDocument {
     format: String,
     version: u32,
+    /// Added by the native transport; older saved snapshots have no instance identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    instance_port: Option<u16>,
     started_unix_ms: u64,
     completed_unix_ms: u64,
     elapsed_ms: u64,
@@ -402,6 +405,7 @@ pub fn capture_with(
     let document = SnapshotDocument {
         format: SNAPSHOT_FORMAT.into(),
         version: SNAPSHOT_VERSION,
+        instance_port: None,
         started_unix_ms,
         completed_unix_ms: unix_ms(),
         elapsed_ms: elapsed_ms(started),
@@ -623,6 +627,9 @@ fn validate_document(value: &Value) -> Result<SnapshotDocument, String> {
     }
     let mut document: SnapshotDocument = serde_json::from_value(value.clone())
         .map_err(|error| format!("invalid snapshot: {error}"))?;
+    if value.get("instance_port").is_some() && document.instance_port.is_none_or(|port| port == 0) {
+        return Err("snapshot instance_port must be an integer between 1 and 65535".into());
+    }
     if document.format != SNAPSHOT_FORMAT
         || document.version != SNAPSHOT_VERSION
         || !document.non_atomic
@@ -1249,6 +1256,41 @@ mod tests {
         malformed["unexpected"] = json!(true);
         assert!(diff_snapshots(&original, &malformed).is_err());
         assert!(diff_snapshots(&original, &json!({})).is_err());
+    }
+
+    #[test]
+    fn diff_accepts_optional_instance_metadata_without_relaxing_snapshot_validation() {
+        let legacy = capture_register("pc", Ok(7), None);
+        assert!(legacy.get("instance_port").is_none());
+        for port in [1, 20000, 65535] {
+            let mut current = legacy.clone();
+            current["instance_port"] = json!(port);
+            assert_eq!(
+                diff_snapshots(&legacy, &current).unwrap()["counts"]["unchanged"],
+                1
+            );
+            assert_eq!(
+                diff_snapshots(&current, &current).unwrap()["counts"]["unchanged"],
+                1
+            );
+        }
+        for port in [
+            json!(0),
+            json!(-1),
+            json!(65536),
+            json!(1.5),
+            json!("20000"),
+            json!(null),
+        ] {
+            let mut invalid = legacy.clone();
+            invalid["instance_port"] = port;
+            assert!(diff_snapshots(&legacy, &invalid).is_err());
+            assert!(diff_snapshots(&invalid, &legacy).is_err());
+        }
+        let mut invalid = legacy.clone();
+        invalid["instance_port"] = json!(20000);
+        invalid["unknown_instance_metadata"] = json!(true);
+        assert!(diff_snapshots(&legacy, &invalid).is_err());
     }
 
     #[test]

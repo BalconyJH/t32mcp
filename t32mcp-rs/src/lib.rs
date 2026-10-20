@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Lauterbach GmbH
 // SPDX-License-Identifier: Apache-2.0
 
-//! Communicating with TRACE32 from Rust. Built on top of Remote API.
-//!
-//! Pipe communication:
-//! - Windows: Named Pipe
-//! - Linux: FIFO
+// The tool schemas are large JSON literals; their macro expansion needs room.
+#![recursion_limit = "256"]
 
 use anyhow::Result;
 use std::cell::Cell;
@@ -20,11 +17,19 @@ pub mod artifacts;
 pub mod capabilities;
 pub mod catalog;
 pub mod diagnostics;
+pub mod docs;
+pub mod execution_policy;
 pub mod image_verify;
 pub mod inspection;
+#[allow(clippy::large_enum_variant)]
+#[rustfmt::skip]
+pub mod mcp;
 pub mod peripheral_views;
 pub mod peripherals;
 pub mod snapshot;
+pub mod t32;
+pub mod t32api;
+pub mod tools;
 
 #[cfg(any(windows, test))]
 mod windows_paths;
@@ -50,13 +55,13 @@ fn connected_api() -> Result<MutexGuard<'static, ()>, String> {
             "No TRACE32 connection on this thread; connect before querying the native API".into(),
         );
     }
-    unsafe { t32::T32_SetChannel(channel) };
+    unsafe { ffi::T32_SetChannel(channel) };
     Ok(guard)
 }
 
 #[allow(warnings)]
-pub mod t32 {
-    include!(concat!(env!("OUT_DIR"), "/t32.rs"));
+pub mod ffi {
+    include!(concat!(env!("OUT_DIR"), "/ffi.rs"));
 }
 
 #[cfg(target_os = "windows")]
@@ -138,7 +143,7 @@ pub fn t32_connect(port: u16) -> Result<(), String> {
     let guard = native_lock();
     let mut channel: *mut c_void = ptr::null_mut();
 
-    let e = unsafe { t32::T32_RequestChannelNetTcp(&mut channel as *mut *mut c_void) };
+    let e = unsafe { ffi::T32_RequestChannelNetTcp(&mut channel as *mut *mut c_void) };
     if e != 0 {
         return Err(format!(
             "Connection with TRACE32 failed: T32_RequestChannelNetTcp returned {e}"
@@ -146,7 +151,7 @@ pub fn t32_connect(port: u16) -> Result<(), String> {
     }
 
     unsafe {
-        t32::T32_SetChannel(channel);
+        ffi::T32_SetChannel(channel);
     }
     CHANNEL.set(channel);
 
@@ -158,12 +163,12 @@ pub fn t32_connect(port: u16) -> Result<(), String> {
             let key = CString::new(key).map_err(|e| e.to_string())?;
             let value = CString::new(value).map_err(|e| e.to_string())?;
             check_api("T32_Config", unsafe {
-                t32::T32_Config(key.as_ptr(), value.as_ptr())
+                ffi::T32_Config(key.as_ptr(), value.as_ptr())
             })?;
         }
-        check_api("T32_Init", unsafe { t32::T32_Init() })?;
+        check_api("T32_Init", unsafe { ffi::T32_Init() })?;
         check_api("T32_Attach", unsafe {
-            t32::T32_Attach(t32::T32_DEV_ICD as i32)
+            ffi::T32_Attach(ffi::T32_DEV_ICD as i32)
         })
     })();
     drop(guard);
@@ -179,9 +184,9 @@ pub fn t32_disconnect() {
         let mut channel = stored.replace(ptr::null_mut());
         if !channel.is_null() {
             unsafe {
-                t32::T32_SetChannel(channel);
-                t32::T32_Exit();
-                t32::T32_ReleaseChannel(&mut channel);
+                ffi::T32_SetChannel(channel);
+                ffi::T32_Exit();
+                ffi::T32_ReleaseChannel(&mut channel);
             }
         }
     });
@@ -210,7 +215,7 @@ fn decode_buffer(buffer: &[u8]) -> Result<String, String> {
 pub fn t32_cmd(cmd: String) -> Result<(), String> {
     let c = api_string(&cmd, "Command")?;
     let _guard = connected_api()?;
-    let e = unsafe { t32::T32_Cmd(c.as_ptr()) };
+    let e = unsafe { ffi::T32_Cmd(c.as_ptr()) };
     check_api("T32_Cmd", e)
 }
 
@@ -232,7 +237,7 @@ pub fn t32_eval(expression: &str) -> Result<Evaluation, String> {
     let mut result_type: u32 = 0;
 
     let e = unsafe {
-        t32::T32_ExecuteFunction(
+        ffi::T32_ExecuteFunction(
             expression.as_ptr(),
             buffer.as_mut_ptr() as *mut c_char,
             buffer_size,
@@ -249,7 +254,7 @@ pub fn t32_eval(expression: &str) -> Result<Evaluation, String> {
 pub fn t32_state() -> Result<i32, String> {
     let _guard = connected_api()?;
     let mut state = 0;
-    check_api("T32_GetState", unsafe { t32::T32_GetState(&mut state) })?;
+    check_api("T32_GetState", unsafe { ffi::T32_GetState(&mut state) })?;
     Ok(state)
 }
 
@@ -257,7 +262,7 @@ pub fn t32_practice_state() -> Result<i32, String> {
     let _guard = connected_api()?;
     let mut state = 0;
     check_api("T32_GetPracticeState", unsafe {
-        t32::T32_GetPracticeState(&mut state)
+        ffi::T32_GetPracticeState(&mut state)
     })?;
     Ok(state)
 }
@@ -267,7 +272,7 @@ pub fn t32_read_register(name: &str) -> Result<u64, String> {
     let _guard = connected_api()?;
     let (mut lower, mut upper) = (0, 0);
     check_api("T32_ReadRegisterByName", unsafe {
-        t32::T32_ReadRegisterByName(name.as_ptr(), &mut lower, &mut upper)
+        ffi::T32_ReadRegisterByName(name.as_ptr(), &mut lower, &mut upper)
     })?;
     Ok((u64::from(upper) << 32) | u64::from(lower))
 }
@@ -298,10 +303,10 @@ fn validate_memory_read_state(state: i32, access: i32, dual_port: bool) -> Resul
 }
 
 struct MemoryObjects {
-    address: t32::T32_AddressHandle,
-    buffer: t32::T32_BufferHandle,
-    release_address: unsafe extern "C" fn(*mut t32::T32_AddressHandle) -> i32,
-    release_buffer: unsafe extern "C" fn(*mut t32::T32_BufferHandle) -> i32,
+    address: ffi::T32_AddressHandle,
+    buffer: ffi::T32_BufferHandle,
+    release_address: unsafe extern "C" fn(*mut ffi::T32_AddressHandle) -> i32,
+    release_buffer: unsafe extern "C" fn(*mut ffi::T32_BufferHandle) -> i32,
 }
 
 impl Default for MemoryObjects {
@@ -309,8 +314,8 @@ impl Default for MemoryObjects {
         Self {
             address: ptr::null_mut(),
             buffer: ptr::null_mut(),
-            release_address: t32::T32_ReleaseAddressObj,
-            release_buffer: t32::T32_ReleaseBufferObj,
+            release_address: ffi::T32_ReleaseAddressObj,
+            release_buffer: ffi::T32_ReleaseBufferObj,
         }
     }
 }
@@ -357,21 +362,21 @@ pub fn t32_read_memory(
     let _guard = connected_api()?;
     let mut objects = MemoryObjects::default();
     check_api("T32_RequestAddressObjA32", unsafe {
-        t32::T32_RequestAddressObjA32(&mut objects.address, address)
+        ffi::T32_RequestAddressObjA32(&mut objects.address, address)
     })?;
     if objects.address.is_null() {
         return Err("T32_RequestAddressObjA32 returned a null address object".into());
     }
     check_api("T32_SetAddressObjAccessString", unsafe {
-        t32::T32_SetAddressObjAccessString(objects.address, access_string.as_ptr())
+        ffi::T32_SetAddressObjAccessString(objects.address, access_string.as_ptr())
     })?;
     if dual_port {
         check_api("T32_SetAddressObjAttr", unsafe {
-            t32::T32_SetAddressObjAttr(objects.address, t32::T32_ADDROBJATTR_EACCESS)
+            ffi::T32_SetAddressObjAttr(objects.address, ffi::T32_ADDROBJATTR_EACCESS)
         })?;
     }
     check_api("T32_RequestBufferObj", unsafe {
-        t32::T32_RequestBufferObj(&mut objects.buffer, length as i32)
+        ffi::T32_RequestBufferObj(&mut objects.buffer, length as i32)
     })?;
     if objects.buffer.is_null() {
         return Err("T32_RequestBufferObj returned a null buffer object".into());
@@ -379,10 +384,10 @@ pub fn t32_read_memory(
 
     // Check immediately before reading; do not call t32_state() while holding API_LOCK.
     let mut state = 0;
-    check_api("T32_GetState", unsafe { t32::T32_GetState(&mut state) })?;
+    check_api("T32_GetState", unsafe { ffi::T32_GetState(&mut state) })?;
     validate_memory_read_state(state, access, dual_port)?;
     check_api("T32_ReadMemoryObj", unsafe {
-        t32::T32_ReadMemoryObj(objects.buffer, objects.address, length as u32)
+        ffi::T32_ReadMemoryObj(objects.buffer, objects.address, length as u32)
     })?;
     let native_buffer = unsafe { &*objects.buffer };
     validate_memory_buffer(
@@ -393,7 +398,7 @@ pub fn t32_read_memory(
     )?;
     let mut buffer = vec![0; length];
     check_api("T32_CopyDataFromBufferObj", unsafe {
-        t32::T32_CopyDataFromBufferObj(buffer.as_mut_ptr(), length as i32, objects.buffer)
+        ffi::T32_CopyDataFromBufferObj(buffer.as_mut_ptr(), length as i32, objects.buffer)
     })?;
     Ok(buffer)
 }
@@ -426,7 +431,7 @@ pub fn t32_lookup_symbol(name: &str) -> Result<SymbolInfo, String> {
         access: 0,
     };
     let status = unsafe {
-        t32::T32_GetSymbol(
+        ffi::T32_GetSymbol(
             c_name.as_ptr(),
             &mut info.address,
             &mut info.size,
@@ -450,12 +455,12 @@ pub fn t32_read_window(command: &str, offset: u32, length: usize) -> Result<Wind
     let _guard = connected_api()?;
     let mut buffer = vec![0; length + 1];
     let count = unsafe {
-        t32::T32_GetWindowContent(
+        ffi::T32_GetWindowContent(
             command.as_ptr(),
             buffer.as_mut_ptr() as *mut c_char,
             buffer.len() as u32,
             offset,
-            t32::T32_PRINTCODE_ASCII,
+            ffi::T32_PRINTCODE_ASCII,
         )
     };
     if count < 0 {
@@ -611,13 +616,13 @@ mod tests {
         thread_local! {
             static RELEASED: Cell<u32> = const { Cell::new(0) };
         }
-        unsafe extern "C" fn release_address(handle: *mut t32::T32_AddressHandle) -> i32 {
+        unsafe extern "C" fn release_address(handle: *mut ffi::T32_AddressHandle) -> i32 {
             assert!(!unsafe { *handle }.is_null());
             RELEASED.set(RELEASED.get() * 10 + 1);
             unsafe { *handle = ptr::null_mut() };
             0
         }
-        unsafe extern "C" fn release_buffer(handle: *mut t32::T32_BufferHandle) -> i32 {
+        unsafe extern "C" fn release_buffer(handle: *mut ffi::T32_BufferHandle) -> i32 {
             assert!(!unsafe { *handle }.is_null());
             RELEASED.set(RELEASED.get() * 10 + 2);
             unsafe { *handle = ptr::null_mut() };

@@ -408,7 +408,10 @@ async def run(args, client_factory=None):
     context = None
     connected = False
     try:
-        transport_args = ["--native-tools", "--read-only", "--port", str(args.port)]
+        transport_args = [
+            "--execution-policy", "scripts", "--native-tools",
+            "--read-only", "--port", str(args.port),
+        ]
         if args.skills:
             transport_args += ["--skills", str(args.skills)]
 

@@ -71,9 +71,9 @@ pub enum MemoryAccess {
 impl MemoryAccess {
     pub(crate) fn native(self) -> i32 {
         match self {
-            Self::Data => crate::t32::T32_MEMORY_ACCESS_DATA as i32,
-            Self::Program => crate::t32::T32_MEMORY_ACCESS_PROGRAM as i32,
-            Self::ArmDap => crate::t32::T32_MEMORY_ACCESS_ARM_DAP as i32,
+            Self::Data => crate::ffi::T32_MEMORY_ACCESS_DATA as i32,
+            Self::Program => crate::ffi::T32_MEMORY_ACCESS_PROGRAM as i32,
+            Self::ArmDap => crate::ffi::T32_MEMORY_ACCESS_ARM_DAP as i32,
         }
     }
 }

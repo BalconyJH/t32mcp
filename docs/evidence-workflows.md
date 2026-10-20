@@ -1,8 +1,8 @@
 # Local evidence workflows
 
 These optional local additions require `--native-tools`. Nothing is uploaded,
-published, flashed, reset or automatically halted. The default server exposes
-three generic PRACTICE tools; `--native-tools --read-only` exposes 15 tools,
+published, flashed, reset or automatically halted. An explicit execution policy
+selects the upstream tools; adding `--native-tools --read-only` exposes 15 tools,
 including all four tools below.
 See [verification procedure](workflow-verification.md) for coverage and checks.
 The separate [batch PER tools](peripheral-inspection.md) require explicit
@@ -12,8 +12,9 @@ hardware or interpreter sandbox.
 
 ## Session diagnostics
 
-Call `doctor` with `{}`. It makes at most one lazy connection attempt (or reuses
-the current channel), then independently queries target state, PRACTICE state,
+Call `doctor` with `{}` for a single instance, or `{"port": 20000}` using the
+actual registered port in an AMP session. It makes at most one connection attempt,
+then independently queries target state, PRACTICE state,
 CPU and software/build metadata.
 
 An unreachable endpoint returns a successful MCP response containing
@@ -104,6 +105,10 @@ Save two snapshots with `save_artifact: true`, then call `diff_snapshots`:
 
 Replace these example IDs with the actual `artifact.id` responses. No debugger
 connection is made. Both snapshots must be in this server's artifact directory.
+New snapshots record `instance_port`; comparisons reject two different recorded
+ports. `instance_comparison` marks legacy snapshots without a port as unknown.
+A matching port alone does not establish that the target, core or configuration
+stayed the same; record that context separately when interpreting evidence.
 The comparison matches item names and query semantics, ignoring timestamps;
 different addresses/lengths/access modes are incompatible, not value changes.
 Results distinguish added, removed, changed, unchanged, incompatible and

@@ -5,6 +5,7 @@
 
 import logging
 import os
+import secrets
 import socket
 import subprocess
 import tempfile
@@ -37,12 +38,16 @@ NATIVE_TOOLS = {
     "wait_for_condition",
     "list_practice_skills",
 }
+OFFLINE_NATIVE_TOOLS = {"list_practice_skills", "diff_snapshots"}
 DEFAULT_TOOLS = {
-    "execute_practice_skill",
-    "collect_practice_skill_response",
-    "abort_practice_skill",
+    "trace32_get_status",
+    "trace32_run_script",
+    "trace32_run_command",
+    "trace32_manage_instances",
 }
-READ_ONLY_TOOLS = {"collect_practice_skill_response"}
+READ_ONLY_TOOLS = {"trace32_get_status"}
+SCRIPTS_TOOLS = DEFAULT_TOOLS - {"trace32_run_command"}
+STRICT_TOOLS = {"trace32_get_status", "trace32_run_script"}
 
 
 def t32mcp_path(request=None) -> str:
@@ -58,6 +63,35 @@ def t32mcp_path(request=None) -> str:
     return str(path)
 
 
+def skills_dir(request=None) -> str:
+    """The repository's skills/ directory, a valid --skills root."""
+    path = ROOT / "skills"
+    assert path.is_dir()
+    return str(path)
+
+
+@contextmanager
+def reserved_offline_port(port=0):
+    """Reserve a localhost endpoint without listening or probing any debugger."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reserved:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            reserved.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        reserved.bind(("127.0.0.1", port))
+        yield reserved.getsockname()[1]
+
+
+@pytest.fixture(scope="session")
+def offline_port():
+    with reserved_offline_port() as port:
+        yield port
+
+
+@pytest.fixture(scope="session")
+def second_offline_port():
+    with reserved_offline_port() as port:
+        yield port
+
+
 @pytest.fixture(scope="session")
 def server_executable() -> str:
     return t32mcp_path()
@@ -66,24 +100,28 @@ def server_executable() -> str:
 @pytest.fixture(scope="session")
 def skills_base(tmp_path_factory) -> Path:
     base = tmp_path_factory.mktemp("skills with spaces")
-    scripts = base / "skill-fixture" / "scripts"
+    skill = base / "fixture"
+    scripts = skill / "scripts"
     scripts.mkdir(parents=True)
-    (scripts / "read.cmm").write_text("", encoding="ascii")
+    (skill / "SKILL.md").write_text("# Offline fixture\n", encoding="ascii")
+    (scripts / "read.cmm").write_text(
+        '; {"interface": 1, "strict": true, "arguments": '
+        '{"key": {"type": "string", "optional": true}}}\n\nENDDO\n',
+        encoding="ascii",
+    )
     (scripts / "ignored.txt").write_text("", encoding="ascii")
     return base
 
 
 @pytest.fixture(scope="session")
-def offline_server_args(skills_base, tmp_path_factory) -> list[str]:
-    # Explicit isolation protects a connected board even if validation regresses.
+def offline_server_args(skills_base, tmp_path_factory, offline_port) -> list[str]:
+    # Holding this unlistened port prevents an accidental connection to a board.
     evidence = tmp_path_factory.mktemp("offline evidence")
     return [
-        "--port",
-        "1",
-        "--skills",
-        str(skills_base),
-        "--artifacts",
-        str(evidence),
+        "--execution-policy", "unrestricted",
+        "--port", str(offline_port),
+        "--skills", str(skills_base),
+        "--artifacts", str(evidence),
     ]
 
 
@@ -96,16 +134,32 @@ def mcp_client_factory(server_executable, offline_server_args):
                 args=[*offline_server_args, *extra_args],
             )
         )
-
     return factory
+
+
+def free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+def wait_for_port(port: int, process: subprocess.Popen, timeout: float = 10.0):
+    """Wait for our HTTP server, never for a TRACE32 Remote API endpoint."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        assert process.poll() is None, f"t32mcp exited with {process.returncode}"
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    raise TimeoutError(f"t32mcp does not listen on port {port}")
 
 
 @pytest.fixture(scope="module")
 def local_mcp_server(server_executable, offline_server_args) -> Client:
     LOGGER.info("Setting up offline STDIO server: %s", server_executable)
-    return Client(
-        StdioTransport(command=server_executable, args=list(offline_server_args))
-    )
+    return Client(StdioTransport(command=server_executable, args=list(offline_server_args)))
 
 
 @pytest.fixture(scope="module")
@@ -116,12 +170,6 @@ def native_mcp_server(server_executable, offline_server_args) -> Client:
             args=[*offline_server_args, "--native-tools"],
         )
     )
-
-
-def _available_http_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
 
 
 def _wait_for_http_server(process, url: str, log_file, timeout: float = 15) -> None:
@@ -135,8 +183,7 @@ def _wait_for_http_server(process, url: str, log_file, timeout: float = 15) -> N
                 if response.status == 200:
                     return
         except HTTPError as error:
-            # An MCP-specific rejection proves the endpoint is serving requests.
-            if error.code in {400, 405, 406, 415}:
+            if error.code in {400, 401, 405, 406, 415}:
                 return
             last_error = error
         except (URLError, TimeoutError, OSError) as error:
@@ -165,29 +212,23 @@ def _stop_owned_process(process: subprocess.Popen) -> None:
 def http_mcp_client_factory(server_executable, offline_server_args):
     @contextmanager
     def factory(*extra_args: str):
-        port = _available_http_port()
+        port = free_port()
+        token = secrets.token_urlsafe(32)
         url = f"http://127.0.0.1:{port}/mcp"
         argv = [
-            server_executable,
-            *offline_server_args,
-            *extra_args,
-            "--http",
-            str(port),
+            server_executable, *offline_server_args, *extra_args,
+            "--http", str(port), "--token", token,
         ]
-        LOGGER.info("Setting up offline HTTP server: %s", argv)
+        LOGGER.info("Setting up offline HTTP server on port %s", port)
         with tempfile.TemporaryFile() as log_file:
             process = subprocess.Popen(
-                argv,
-                stdin=subprocess.DEVNULL,
-                stdout=log_file,
-                stderr=log_file,
+                argv, stdin=subprocess.DEVNULL, stdout=log_file, stderr=log_file,
             )
             try:
                 _wait_for_http_server(process, url, log_file)
-                yield Client(StreamableHttpTransport(url=url))
+                yield Client(StreamableHttpTransport(url=url, auth=token))
             finally:
                 _stop_owned_process(process)
-
     return factory
 
 

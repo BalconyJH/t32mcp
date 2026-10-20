@@ -76,6 +76,7 @@ class PackagingTests(unittest.TestCase):
                     path,
                 )
             self.assertFalse(any("/skill-trace32/" in name for name in names))
+            self.assertFalse(any("/skills/" in name for name in names))
 
     @unittest.skipUnless(os.environ.get("T32MCP_SDIST"), "T32MCP_SDIST is not set")
     def test_sdist_contents(self):
@@ -97,11 +98,20 @@ class PackagingTests(unittest.TestCase):
             "t32mcp-rs/build.rs",
             "t32mcp-rs/src/main.rs",
             "t32mcp-rs/src/lib.rs",
-            "t32mcp-rs/src/cli.rs",
-            "t32mcp-rs/src/server/mod.rs",
-            "t32mcp-rs/src/server/native.rs",
-            "t32mcp-rs/src/server/output.rs",
-            "t32mcp-rs/src/server/practice.rs",
+            "t32mcp-rs/src/t32.rs",
+            "t32mcp-rs/src/t32api.rs",
+            "t32mcp-rs/src/mcp.rs",
+            "t32mcp-rs/src/execution_policy.rs",
+            "t32mcp-rs/src/docs.rs",
+            "t32mcp-rs/src/tools/mod.rs",
+            "t32mcp-rs/src/tools/native.rs",
+            "t32mcp-rs/src/tools/trace32_run_script.rs",
+            "t32mcp-rs/src/tools/trace32_run_command.rs",
+            "t32mcp-rs/src/tools/trace32_get_status.rs",
+            "t32mcp-rs/src/tools/trace32_manage_instances.rs",
+            "t32mcp-rs/mcp_2025_03_26.json",
+            "t32mcp-rs/mcp_2025_11_25.json",
+            "t32mcp-rs/mcp_2026_07_28.json",
             "t32mcp-rs/src/windows_paths.rs",
             "t32mcp-rs/src/artifacts.rs",
             "t32mcp-rs/src/capabilities.rs",
@@ -109,7 +119,6 @@ class PackagingTests(unittest.TestCase):
             "t32mcp-rs/src/diagnostics.rs",
             "t32mcp-rs/src/image_verify.rs",
             "t32mcp-rs/src/inspection.rs",
-            "t32mcp-rs/src/skill_paths.rs",
             "t32mcp-rs/src/snapshot.rs",
             "t32mcp-rs/src/peripherals.rs",
             "t32mcp-rs/src/peripheral_views.rs",
@@ -135,6 +144,8 @@ class PackagingTests(unittest.TestCase):
             }
             sources = [
                 *(ROOT / "t32mcp-rs" / "src").rglob("*.rs"),
+                *(ROOT / "t32mcp-rs" / "src" / "docs").glob("*.md"),
+                *(ROOT / "t32mcp-rs").glob("mcp_*.json"),
                 *(ROOT / "docs").glob("*.md"),
             ]
             for source in sources:

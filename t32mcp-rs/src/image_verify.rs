@@ -1424,7 +1424,7 @@ mod tests {
             prepared_bin(&[0x12, 0x34, 0x56], 2),
             || Ok(1),
             |address, length, access, dual| {
-                assert_eq!(access, crate::t32::T32_MEMORY_ACCESS_DATA as i32);
+                assert_eq!(access, crate::ffi::T32_MEMORY_ACCESS_DATA as i32);
                 assert!(!dual);
                 let offset = (address - 0x1000) as usize;
                 Ok([0x12, 0x34, 0x56][offset..offset + length].to_vec())

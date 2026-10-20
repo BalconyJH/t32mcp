@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Lauterbach GmbH
 # SPDX-License-Identifier: Apache-2.0
 
-"""Target capability policy tests; MCP fixtures use isolated TCP port 1."""
+"""Target capability policy tests; fixtures reserve unlistened TCP ports."""
 
 import json
 import subprocess
@@ -64,7 +64,7 @@ async def test_unsupported_policy_refuses_per_before_connection(
     assert report["stop_reason"]["code"] == stop_code
     assert len(report["results"]) == 2
     assert all(item["status"] == "not_attempted" for item in report["results"])
-    assert "127.0.0.1:1" not in json.dumps(report)
+    assert "127.0.0.1:" not in json.dumps(report)
     if tool == "read_per_registers":
         assert report["counts"]["evaluations"] == 0
         assert report["counts"]["state_probes"] == 0
@@ -93,7 +93,7 @@ async def test_policy_never_bypasses_side_effect_acknowledgement(
     ) as client:
         error = await tool_error(client, tool, arguments)
     assert "acknowledge_side_effects" in error
-    assert "127.0.0.1:1" not in error
+    assert "127.0.0.1:" not in error
 
 
 @pytest.mark.parametrize(
@@ -106,11 +106,16 @@ async def test_policy_never_bypasses_side_effect_acknowledgement(
         '{"per_support":"auto","cpu":"TestBoard"}',
     ],
 )
-def test_invalid_config_fails_at_startup(server_executable, tmp_path, contents):
+def test_invalid_config_fails_at_startup(
+    server_executable, tmp_path, contents, offline_port
+):
     path = tmp_path / "invalid.json"
     path.write_text(contents, encoding="utf-8")
     result = subprocess.run(
-        [server_executable, "--port", "1", "--target-config", str(path)],
+        [
+            server_executable, "--execution-policy", "scripts",
+            "--port", str(offline_port), "--target-config", str(path),
+        ],
         input="",
         capture_output=True,
         text=True,
@@ -118,4 +123,4 @@ def test_invalid_config_fails_at_startup(server_executable, tmp_path, contents):
         check=False,
     )
     assert result.returncode != 0
-    assert "127.0.0.1:1" not in result.stderr
+    assert "127.0.0.1:" not in result.stderr

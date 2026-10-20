@@ -5,9 +5,10 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
-from conftest import NATIVE_TOOLS
+from conftest import NATIVE_TOOLS, OFFLINE_NATIVE_TOOLS
 from mcp.shared.exceptions import McpError
 
 
@@ -61,8 +62,20 @@ async def test_inspection_tool_schemas(
         tools = {tool.name: tool for tool in await client.list_tools()}
     schema = tools[tool_name].inputSchema
     assert set(schema.get("required", [])) == required
-    assert set(schema["properties"]) == properties
+    assert set(schema["properties"]) == properties | {"port"}
     assert schema.get("additionalProperties") is False
+
+
+@pytest.mark.parametrize("tool_name", sorted(NATIVE_TOOLS))
+async def test_native_tool_port_selection_schema(native_mcp_server, tool_name):
+    async with native_mcp_server as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+    schema = tools[tool_name].inputSchema
+    if tool_name in OFFLINE_NATIVE_TOOLS:
+        assert "port" not in schema.get("properties", {})
+    else:
+        assert "port" in schema["properties"]
+        assert "port" not in schema.get("required", [])
 
 
 @pytest.mark.parametrize(
@@ -187,7 +200,7 @@ async def test_invalid_requests_are_rejected_before_connecting(
     async with native_mcp_server as client:
         error = await tool_error(client, tool_name, arguments)
     assert expected in error, error
-    assert "127.0.0.1:1" not in error, error
+    assert "127.0.0.1:" not in error, error
     assert "RCL=NETTCP" not in error, error
 
 
@@ -235,33 +248,34 @@ async def test_schema_errors_are_protocol_errors(
         ("fixture", "read\x00.cmm"),
     ],
 )
-async def test_skill_path_traversal_rejected(local_mcp_server, skill_name, script_name):
-    async with local_mcp_server as client:
+async def test_skill_path_traversal_rejected(mcp_client_factory, skill_name, script_name):
+    async with mcp_client_factory("--execution-policy", "strict") as client:
         error = await tool_error(
             client,
-            "execute_practice_skill",
+            "trace32_run_script",
             {"skill_name": skill_name, "script_name": script_name},
         )
-    assert "single safe path component" in error, error
+    assert "Invalid skill_name" in error or "Invalid script_name" in error, error
+    assert "127.0.0.1:" not in error
 
 
 @pytest.mark.parametrize(
     ("arguments", "expected"),
     [
-        ({"bad key": "1"}, "Invalid script argument key"),
-        ({"1key": "1"}, "Invalid script argument key"),
-        ({"key": "1\nEND"}, "control characters"),
-        ({"key": '" END'}, "double quotes"),
-        ({"key": "&macro"}, "PRACTICE macro reference"),
+        ({"bad key": "1"}, "Unknown argument"),
+        ({"1key": "1"}, "Unknown argument"),
+        ({"key": "1\nEND"}, "does not match the pattern"),
+        ({"key": '" END'}, "does not match the pattern"),
+        ({"key": "&macro"}, "does not match the pattern"),
     ],
 )
 async def test_skill_arguments_rejected_before_connecting(
-    local_mcp_server, arguments, expected
+    mcp_client_factory, arguments, expected
 ):
-    async with local_mcp_server as client:
+    async with mcp_client_factory("--execution-policy", "strict") as client:
         error = await tool_error(
             client,
-            "execute_practice_skill",
+            "trace32_run_script",
             {
                 "skill_name": "fixture",
                 "script_name": "read.cmm",
@@ -269,38 +283,47 @@ async def test_skill_arguments_rejected_before_connecting(
             },
         )
     assert expected in error, error
-    assert "127.0.0.1:1" not in error
+    assert "127.0.0.1:" not in error
 
 
-async def test_discover_skills_without_a_debugger(native_mcp_server):
+async def test_discover_skills_without_a_debugger(native_mcp_server, skills_base):
     async with native_mcp_server as client:
         result = await client.call_tool("list_practice_skills", {})
     response = result_object(result)
     assert response["truncated"] is False
-    assert response["skills"] == [
-        {"skill_name": "fixture", "scripts": ["read.cmm"], "instructions_path": None}
-    ]
+    assert len(response["skills"]) == 1
+    skill = response["skills"][0]
+    assert skill["skill_name"] == "fixture"
+    assert skill["scripts"] == ["read.cmm"]
+    assert Path(skill["instructions_path"]).samefile(
+        skills_base / "fixture" / "SKILL.md"
+    )
+    assert Path(skill["skill_directory"]).samefile(skills_base / "fixture")
 
 
-async def test_collect_without_active_script_is_bounded(local_mcp_server):
+async def test_status_with_absent_debugger_is_bounded(local_mcp_server, offline_port):
     async with local_mcp_server as client:
         result = await asyncio.wait_for(
-            client.call_tool("collect_practice_skill_response", {}), timeout=5
+            client.call_tool(
+                "trace32_get_status", {"timeout": 1}, raise_on_error=False
+            ),
+            timeout=10,
         )
+    assert result.is_error
     text = result_text(result)
-    assert "<FINISHED>" in text
-    assert "<NOT FINISHED>" not in text
+    assert str(offline_port) in text
+    assert "127.0.0.1:20000" not in text
 
 
 @pytest.mark.parametrize(
     "tool_name",
-    ["execute_practice", "execute_practice_skill", "abort_practice_skill"],
+    ["trace32_run_script", "trace32_run_command", "trace32_manage_instances"],
 )
 @pytest.mark.parametrize("extra_args", [(), ("--native-tools",)])
 async def test_read_only_rejects_direct_calls_to_hidden_tools(
     mcp_client_factory, tool_name, extra_args
 ):
-    async with mcp_client_factory(*extra_args, "--t32chat", "--read-only") as client:
+    async with mcp_client_factory(*extra_args, "--read-only") as client:
         error = await tool_error(client, tool_name, {})
     assert any(
         phrase in error.lower()
@@ -318,4 +341,22 @@ async def test_native_tools_cannot_be_called_without_opt_in(
         phrase in error.lower()
         for phrase in ("not found", "unknown tool", "disabled", "not registered")
     ), error
-    assert "127.0.0.1:1" not in error
+    assert "127.0.0.1:" not in error
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "execute_practice",
+        "execute_practice_skill",
+        "collect_practice_skill_response",
+        "abort_practice_skill",
+    ],
+)
+async def test_removed_legacy_tools_are_not_callable(local_mcp_server, tool_name):
+    async with local_mcp_server as client:
+        error = await tool_error(client, tool_name, {})
+    assert any(
+        phrase in error.lower()
+        for phrase in ("not found", "unknown tool", "disabled", "not registered")
+    ), error

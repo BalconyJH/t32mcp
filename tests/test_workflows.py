@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Lauterbach GmbH
 # SPDX-License-Identifier: Apache-2.0
 
-"""Offline workflow regressions: fixtures isolate TRACE32 access to TCP port 1."""
+"""Offline workflow regressions: fixtures reserve unlistened TCP ports."""
 
 import hashlib
 import json
@@ -45,7 +45,7 @@ def hex_record(address: int, data: bytes, kind=0):
 
 
 def assert_validation_preceded_connection(error: str):
-    assert "127.0.0.1:1" not in error, error
+    assert "127.0.0.1:" not in error, error
     assert "RCL=NETTCP" not in error, error
     assert "TCP_PREFLIGHT_FAILED" not in error, error
 
@@ -108,7 +108,7 @@ async def test_workflow_tools_remain_available_read_only(mcp_client_factory):
 
 
 async def test_doctor_absent_endpoint_returns_evidence_not_mcp_error(
-    native_mcp_server,
+    native_mcp_server, offline_port,
 ):
     async with native_mcp_server as client:
         result = await client.call_tool("doctor", {}, raise_on_error=False)
@@ -118,7 +118,7 @@ async def test_doctor_absent_endpoint_returns_evidence_not_mcp_error(
     assert report["endpoint"] == {
         "transport": "tcp",
         "host": "127.0.0.1",
-        "port": 1,
+        "port": offline_port,
     }
     assert report["outcome"] == "connection_failed"
     assert report["connection"]["ok"] is False
@@ -294,7 +294,7 @@ async def test_snapshot_invalid_requests_fail_before_connecting(
 
 
 async def test_snapshot_connection_failure_keeps_independent_outcomes(
-    mcp_client_factory, tmp_path
+    mcp_client_factory, tmp_path, offline_port
 ):
     directory = tmp_path / "not-created-without-opt-in"
     request = snapshot_request()
@@ -319,7 +319,7 @@ async def test_snapshot_connection_failure_keeps_independent_outcomes(
     assert response["state_after"]["ok"] is False
     for item in response["items"]:
         assert item["read"]["ok"] is False
-        assert "127.0.0.1:1" in item["read"]["error"]
+        assert f"127.0.0.1:{offline_port}" in item["read"]["error"]
         assert item["check"] == "incomplete"
     assert response["artifact"] == {
         "saved": False,
@@ -534,7 +534,7 @@ async def test_hex_cannot_be_silently_relocated(native_mcp_server, tmp_path):
 
 @pytest.mark.parametrize("save_artifact", [False, True])
 async def test_valid_bin_with_absent_debugger_has_no_verified_bytes(
-    mcp_client_factory, tmp_path, save_artifact
+    mcp_client_factory, tmp_path, save_artifact, offline_port
 ):
     expected_bytes = b"\x01\x23\x45\x67"
     path = tmp_path / "firmware.bin"
@@ -567,7 +567,7 @@ async def test_valid_bin_with_absent_debugger_has_no_verified_bytes(
     )
     assert response["input"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert response["stop_reason"]["code"] == "state_unknown"
-    assert "127.0.0.1:1" in response["stop_reason"]["message"]
+    assert f"127.0.0.1:{offline_port}" in response["stop_reason"]["message"]
     assert response["raw_target_bytes_included"] is False
     assert response["authenticity_verified"] is False
     assert len(response["segments"]) == 1

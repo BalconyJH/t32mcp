@@ -5,8 +5,8 @@
 This implementation uses the installed `lauterbachdebugger-mcp` 0.1.0 as a
 capability reference, not as a dependency or copied implementation. The native
 Rust server remains the single executable. Its focused additions retain the
-original three-tool PRACTICE workflow by default rather than reproducing all 51
-reference tools or enabling automatic reset/flash/write operations. Native
+upstream 0.3.0 execution-policy tool surface by default rather than reproducing
+all 51 reference tools or enabling automatic reset/flash/write operations. Native
 enhancements require explicit `--native-tools`; they are a local opt-in
 exception, not an upstream-approved pattern for adding capabilities.
 `CONTRIBUTING.md` continues to direct new capabilities into documented scripts.
@@ -15,18 +15,28 @@ exception, not an upstream-approved pattern for adding capabilities.
 
 | Startup options | Exposed tools |
 | --- | --- |
-| Default | 3 generic PRACTICE tools |
-| `--t32chat` | 4, including unrestricted PRACTICE execution |
-| `--native-tools` | 17, including 14 local native extensions |
-| `--native-tools --t32chat` | 18 |
-| `--read-only` | 1, response collection only |
-| `--native-tools --read-only` | 15, response collection and native extensions |
+| `--execution-policy scripts` | 3: status, instance management, script execution |
+| `--execution-policy unrestricted` | 4, also command execution |
+| `--execution-policy strict --skills DIR --port PORT` | 2: status and approved scripts |
+| Any policy plus `--native-tools` | Policy-specific tools plus 14 native extensions |
+| Any policy plus `--read-only` | 1: `trace32_get_status` |
+| Any policy plus `--native-tools --read-only` | 15: status and native extensions |
 
-`--read-only` suppresses execution and abort even with `--t32chat`. Existing
-clients of the earlier local native-default build must add `--native-tools`;
-the native tool names, request schemas and results remain available in that
-explicit mode. The server's advertised tool list establishes callable
+An explicit execution policy is always required. `--read-only` suppresses
+script/command execution and instance management under every policy.
+`--t32chat` is replaced by `--execution-policy unrestricted`; it is no longer
+accepted as a shortcut. Existing native clients must retain `--native-tools`.
+The native tool names and result shapes remain, with an optional `port` added
+to hardware requests. The server's advertised tool list establishes callable
 interfaces, not support on the connected chip.
+
+With one registered PowerView port, native tools may omit `port`. Multiple
+instances require an explicit registered port; unknown ports are rejected
+without probing or adding an instance. Native requests use a fresh connection
+on the shared worker and disconnect afterwards, without retries or selecting a
+different core. `list_practice_skills` and `diff_snapshots` remain offline.
+Capability declarations apply to the server session; use separate servers when
+instances need different declarations.
 
 ## Target-specific support
 
@@ -105,7 +115,7 @@ neither the stopped-state guard nor `--read-only` is an interpreter sandbox.
 ## Starting safely
 
 ```powershell
-t32mcp --native-tools --read-only
+t32mcp --execution-policy scripts --native-tools --read-only
 ```
 
 Use this command as the stdio transport of an MCP client. PowerView must already
@@ -119,8 +129,8 @@ API, but never sends `Go`, `Break`, reset, flash, ELF-load or memory-write
 commands. No implicit target connection occurs at server startup.
 
 `--read-only` is a command-surface restriction, not an authorization boundary.
-It hides `execute_practice_skill`, `abort_practice_skill`, and
-`execute_practice`. With `--native-tools`, expression evaluation, memory and
+It hides `trace32_run_script`, `trace32_run_command`, and
+`trace32_manage_instances`. With `--native-tools`, expression evaluation, memory and
 window reads remain available. Read-to-clear peripherals and target-specific
 expression functions
 can have side effects; use only known observation expressions and safe memory
@@ -143,12 +153,13 @@ verified support. On other architectures, running-target memory inspection
 through this implementation remains unavailable; it does not auto-select DAP
 or reconfigure the debugger.
 
-HTTP, if explicitly requested, binds to loopback and has no authentication.
-All clients share one native connection and PRACTICE output sink. Operations
-are serialized on the same runtime thread; vendor builds may use global or
-thread-local state, so the native library boundary also serializes calls and
-checks the current thread's channel. Use stdio or one trusted local client; this is not a multi-tenant
-debugging service.
+HTTP defaults to loopback and supports the upstream token and Origin checks.
+Non-loopback binding requires a token and an allowed origin. See
+[HTTP configuration](../README.md#serving-remote-mcp-via-http).
+All clients share the worker and registered PowerView instances. Native and
+upstream operations are serialized on that worker; the vendor API boundary
+also serializes calls and checks its thread-local channel. Authentication does
+not make this a multi-tenant debugging service.
 
 ## Structured inspection examples
 
@@ -158,7 +169,7 @@ representation. General inspection batches include `count`, `succeeded`,
 count/status schemas. An individual `ok: false` does not discard other results.
 Invalid requests fail before any connection or hardware operation.
 
-`get_debugger_status` takes no parameters. Target state values are `0` down,
+`get_debugger_status` takes optional `port`. Target state values are `0` down,
 `1` halted, `2` stopped and `3` running. Optional CPU/version queries retain
 their own error when unavailable.
 
@@ -258,29 +269,30 @@ recent 1000 observations with a dropped-sample count. A missed condition returns
 `TIMEOUT=` setting. Polling deadlines are checked between synchronous API
 calls; a blocked native call cannot be interrupted by Tokio. A match returned
 after a slow call can have `matched: true` and `deadline_exceeded: true`.
-Other tool calls wait behind an active condition poll. Pipe acceptance has a
-separate three-second asynchronous limit, not a hard FFI timeout. Restart the
+Other tool calls wait behind an active condition poll. Upstream script timeouts
+do not provide a hard FFI timeout for native tools. Restart the
 MCP process if the vendor API itself becomes unresponsive.
 
 ## PRACTICE compatibility and limits
 
-The original execute/collect/abort tool names and parameters remain intact.
-Execution and collection return `<FINISHED>` or `<NOT FINISHED>`, followed by
-an explicit `<TRUNCATED>true|false</TRUNCATED>` marker and `<CONTENT>`.
-Buffered output is limited to 1 MiB. Collection drains for a bounded interval;
-an incomplete drain is reported as truncated rather than waiting forever.
-Aborted/failed readers cannot append into a later request.
+Upstream 0.3.0 replaces execute/collect/abort with `trace32_run_script`, which
+accepts optional `script_args` and instance/core selection. Under `scripts` or
+`unrestricted`, address scripts by absolute `script_path`; under `strict`, use
+the actual directory's `skill_name` and a `script_name` within its `scripts/`
+directory. It returns output directly; the old polling markers and schema no
+longer apply. `trace32_run_command` is only exposed under `unrestricted`.
+The `strict` policy requires a configured skill root and an interface-1 header
+declaring `"strict": true`. See [execution policies](../README.md#execution-policies)
+and the bundled skill creator before migrating scripts.
 
 The optional native `list_practice_skills` tool lists filenames and instruction
-paths under `--skills` without parsing scripts. Discovery is bounded and reports `truncated`.
-Execution accepts single-component skill/script names and enforces canonical
-containment, including symlinks. Argument keys are ASCII identifiers; controls,
-quotes and macro-reference-like values are rejected before connection.
-Review a skill's documented behavior before enabling its execution.
-
-The unrestricted `--t32chat` interface remains opt-in. Its temporary DO/PEDIT
-files are deliberately retained because PowerView can use them after the call
-returns; they are not a managed artifact store.
+paths under the configured skills roots without parsing scripts. Discovery is
+bounded and reports `truncated`; it does not certify strict eligibility or safe
+execution. The new bundled skill is `lauterbach-trace32-debug-basic`.
+`skill_name` is always the actual directory name, including a legacy `skill-`
+prefix. `legacy_name` records the old shortened name only as migration metadata;
+do not use it as an execution selector.
+Review a skill's documented behavior before enabling execution.
 
 ## Verification
 
@@ -295,7 +307,7 @@ uv run pytest
 
 Use the pinned toolchain and prerequisites in [installation](installation.md).
 
-The pre-existing Rust tests in `t32mcp-rs/tests/test_t32.rs` contact PowerView
+The Rust tests in `t32mcp-rs/tests/t32_test.rs` contact PowerView
 and print output. Do not run an unqualified `cargo test` against a shared
 debugger; the offline command above intentionally excludes them.
 
@@ -314,7 +326,7 @@ per-item errors and `state_unchanged`; a powered board is not evidence that
 every API capability works.
 
 The hardware helpers explicitly start the server with
-`--native-tools --read-only`; they do not change the default server mode.
+`--execution-policy scripts --native-tools --read-only`; they do not change the default server mode.
 
 For bounded, checkpointed checks, use the opt-in inspection probe. Choose an
 output path for each attempt; it records calls before and after execution,
@@ -323,7 +335,7 @@ including transport failure. These examples do not set up or restart PowerView:
 ```powershell
 .\tests\.venv\Scripts\python.exe .\tests\hardware_inspection.py `
   --server $T32McpExecutable --port $Trace32Port `
-  --phase queries --skills .\.claude\skills `
+  --phase queries --skills .\skills `
   --output .\dist\queries.json
 
 .\tests\.venv\Scripts\python.exe .\tests\hardware_inspection.py `

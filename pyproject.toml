@@ -28,8 +28,13 @@ manifest-path = "t32mcp-rs/Cargo.toml"
 bindings = "bin"
 locked = true
 include = [
+    { path = "LICENSES/*.txt", format = "sdist" },
     { path = "t32mcp-rs/lib/**/*", format = "sdist" },
     { path = "t32mcp-rs/Cargo.lock", format = "sdist" },
+    { path = "t32mcp-rs/build.rs", format = "sdist" },
+    { path = "t32mcp-rs/mcp_*.json", format = "sdist" },
+    { path = "t32mcp-rs/src/docs/*.md", format = "sdist" },
+    { path = "t32mcp-rs/.cargo/config.toml", format = "sdist" },
     { path = "t32mcp-rs/rust-toolchain.toml", format = "sdist" },
     { path = "docs/*.md", format = "sdist" },
 ]
@@ -43,5 +48,8 @@ cache-keys = [
     { file = "t32mcp-rs/rust-toolchain.toml" },
     { file = "t32mcp-rs/.cargo/config.toml" },
     { file = "t32mcp-rs/src/**/*.rs" },
+    { file = "t32mcp-rs/src/docs/*.md" },
+    { file = "t32mcp-rs/mcp_*.json" },
     { file = "t32mcp-rs/lib/**/*" },
+    { file = "LICENSES/*.txt" },
 ]

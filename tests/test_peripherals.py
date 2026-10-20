@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Lauterbach GmbH
 # SPDX-License-Identifier: Apache-2.0
 
-"""Offline PER protocol regressions; fixtures use only isolated TCP port 1."""
+"""Offline PER protocol regressions; fixtures reserve unlistened TCP ports."""
 
 import pytest
 from test_tools import result_object, tool_error
@@ -27,7 +27,7 @@ def views_request(**overrides):
 
 def assert_validation_preceded_connection(error: str):
     assert error
-    assert "127.0.0.1:1" not in error, error
+    assert "127.0.0.1:" not in error, error
     assert "RCL=NETTCP" not in error, error
     assert "TCP_PREFLIGHT_FAILED" not in error, error
 
@@ -67,7 +67,7 @@ async def test_peripheral_tool_schemas(native_mcp_server, name, required, proper
     schema = tools[name].inputSchema
     assert schema["type"] == "object"
     assert set(schema.get("required", [])) == required
-    assert set(schema["properties"]) == properties
+    assert set(schema["properties"]) == properties | {"port"}
     assert schema.get("additionalProperties") is False
     assert schema["properties"]["acknowledge_side_effects"]["default"] is False
     assert schema["properties"]["timeout_ms"]["default"] == 5000

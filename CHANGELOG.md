@@ -7,15 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - Local Enhancements
 ### Changed
+- Merge upstream 0.3.0: require an explicit execution policy, use the new
+  `trace32_*` tools and skill layout, and retain optional native inspection on
+  the shared worker. Native requests accept an optional registered `port`;
+  multiple instances require an explicit selection.
+- Keep local uv packaging and the vendor API used by native inspection.
+- Replace `--t32chat` with `--execution-policy unrestricted`. `--read-only`
+  now exposes status only, plus the 14 native tools when explicitly enabled.
 - Keep chip/session capabilities separate from advertised MCP tools. Passive
   diagnostics preserve unknown support and user declarations separately from
   definition metadata; general setup examples do not reuse a test board's
   endpoint or paths. Hardware smoke register reads are now explicitly selected.
-- Restore the default three-tool PRACTICE interface; preserve the 14 local
-  native extensions behind explicit `--native-tools`. Existing native-tool
-  clients must add that option when updating.
-- Restore all 22 PRACTICE script references directly in `SKILL.md`, with
-  optional native guidance separated from the default script workflow.
+- Preserve the 14 local native extensions behind explicit `--native-tools`.
+  Existing native-tool clients must add that option when updating.
+- Keep optional native guidance separate from the upstream script workflow.
 - Separate MCP routing from feature implementations and simplify PER batch
   control flow without changing the native request/response contracts.
 
@@ -52,6 +57,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the distinction between asynchronous polling limits and blocking
   vendor TCP API calls.
 
+## [0.3.0] - 2026-10-19
+
+**Note to existing users**:
+To provide better control over your agent, this version of `t32mcp` requires you to explicitly set an `--execution-policy`.
+To use the `strict` policy, you will also need to migrate the headers of your existing scripts to the schema which is described in [PRACTICE Script Authoring](./README.md).
+To simplify migration, we are providing you also with a new skill `lauterbach-trace32-skill-creator` which describes this schema in detail.
+
+### Added
+- AMP support: `--port` is repeatable. PowerView instances are addressed by their Remote API port, cores by their core number; `trace32_manage_instances` can manage instances at runtime.
+- Execution policy support (`--execution-policy`): `unrestricted`, `scripts`, `strict`. `strict` only executes skill scripts that declare `"strict": true` in their header.
+- HTTP transport options: `--bind` (default `127.0.0.1`), `--token`, `--allow-origin`. Binding a non-loopback address requires token and allowed origin.
+- Skill `lauterbach-trace32-skill-creator`: Create new skills with the help of `t32chat`.
+
+### Changed
+- **Breaking**: Tool set replaced with `trace32_manage_instances`, `trace32_get_status`, `trace32_run_script`, `trace32_run_command` (previous tool set: [0.1.0](#010---2026-06-30)).
+- Renamed `skill-trace32` to `lauterbach-trace32-debug-basic`.
+- Multiple `--skills` directories can be specified.
+- Dropped `rmcp` dependency: MCP implemented using `typify` and `serde` instead. Server runs multi-threaded.
+
+### Fixed
+- Improved named pipe connection: lazily initialized and persistent.
+- Hardening against script injections: PRACTICE script header, see "PRACTICE Script Authoring" in the README
+
 ## [0.2.2] - 2026-07-31
 ### Changed
 - Bumped version for CI.
@@ -87,6 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial release of the TRACE32 MCP server.
 - Rust implementation that connects to TRACE32 via the remote API.
+- Tools: `execute_practice_skill`, `collect_practice_skill_response`, `abort_practice_skill`.
 - Includes basic skills for standard debugging operations, with each operation provided by a PRACTICE script.
 - Prebuilt executables for x86-64 Linux (`t32mcp-linux-x86_64`) and Windows
   (`t32mcp-windows-x86_64.exe`), plus the TRACE32 skill bundled as

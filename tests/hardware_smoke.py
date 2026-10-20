@@ -29,6 +29,9 @@ from fastmcp.client.transports import StdioTransport
 LOGGER = logging.getLogger(__name__)
 
 FORBIDDEN_TOOLS = {
+    "trace32_run_script",
+    "trace32_run_command",
+    "trace32_manage_instances",
     "execute_practice",
     "execute_practice_skill",
     "abort_practice_skill",
@@ -120,7 +123,10 @@ async def run(args, *, client_factory=None) -> dict:
     }
     transport = StdioTransport(
         command=str(server),
-        args=["--native-tools", "--read-only", "--port", str(args.port)],
+        args=[
+            "--execution-policy", "scripts", "--native-tools",
+            "--read-only", "--port", str(args.port),
+        ],
     )
     async with (client_factory or Client)(transport) as client:
         names = {tool.name for tool in await client.list_tools()}

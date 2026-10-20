@@ -24,8 +24,9 @@ Set-Location ..
 Add `--offline` to Cargo commands only when dependencies are cached. These
 commands run library/binary tests and only compile integration tests. Do not
 use unqualified `cargo test`: existing integration tests contact PowerView.
-Python fixtures select an isolated unavailable Remote API endpoint, not a board
-session. Ensure that no debugger serves that endpoint in the test environment.
+Python fixtures reserve isolated unavailable Remote API endpoints, not board
+sessions. Live contract tests require both `T32MCP_HARDWARE=1` and an explicit
+`T32MCP_T32_PORT`; leave these unset for offline verification.
 
 Coverage includes default PRACTICE registration, native opt-in, read-only
 combinations, bounded inputs, absent-endpoint errors and partial observations.
@@ -57,7 +58,7 @@ Start with the status-only smoke helper in [tests/README.md](../tests/README.md)
 Request registers or symbols only by names valid for that session. Follow
 [capability configuration](local-capabilities.md#session-capability-configuration)
 for optional `--target-config`; metadata detection is not proof of safe PER
-reads. Default mode retains three PRACTICE tools. Inspection requires explicit
+reads. The required execution policy selects the upstream tool set. Inspection requires explicit
 `--native-tools`, normally with `--read-only` for these checks.
 
 Memory, expressions and windows require separate review of target-side effects.

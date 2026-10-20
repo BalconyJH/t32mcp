@@ -19,9 +19,9 @@ For installation from a matching prebuilt wheel:
   enabled. The server default is `20000`; use `--port` when your session uses
   another port. Installation and `--help` do not require a debugger or board.
 - For skill discovery/execution, an explicit skills directory containing
-  `skill-trace32/scripts/*.cmm`. Optional native inspection tools work without
+  `lauterbach-trace32-debug-basic/scripts/*.cmm`. Optional native inspection tools work without
   skills, but require `--native-tools`.
-  The wheel does not bundle skills. A checkout's `.claude/skills` directory is
+  The wheel does not bundle skills. A checkout's `skills` directory is
   one option, and must remain available after installation.
 
 For a build from this checkout or a source distribution:
@@ -63,7 +63,7 @@ Installing a native binary is not an editable source installation.
 To launch the MCP server over standard input/output:
 
 ```powershell
-t32mcp --skills "C:\path\to\skills"
+t32mcp --execution-policy scripts --skills "C:\path\to\skills"
 ```
 
 This process waits for an MCP client; a quiet terminal is expected. Do not use a
@@ -76,6 +76,7 @@ same command and arguments instead:
     "t32mcp": {
       "command": "t32mcp",
       "args": [
+        "--execution-policy", "scripts",
         "--skills", "C:\\path\\to\\skills"
       ]
     }
@@ -83,12 +84,15 @@ same command and arguments instead:
 }
 ```
 
-These examples expose the default three generic PRACTICE tools. Native
+These examples expose the three upstream tools allowed by the `scripts` policy.
+All server launches require an explicit execution policy. `strict` additionally
+requires an explicit `--port`, a skills root, and compatible script headers.
+Native
 inspection is an explicit local extension; add `--native-tools` to the server
 arguments only when needed. For native inspection without execution tools:
 
 ```powershell
-t32mcp --native-tools --read-only
+t32mcp --execution-policy scripts --native-tools --read-only
 ```
 
 Set paths and the Remote API port for your environment. These launch commands
@@ -103,11 +107,15 @@ Omission defaults to `auto`: `doctor` may inspect the selected definition's
 filename, but does not claim successful PER reads. See
 [capability configuration](local-capabilities.md#session-capability-configuration).
 
-`--read-only` disables script execution and abort, including unrestricted
-PRACTICE execution. Without `--native-tools`, it leaves only response collection;
+`--read-only` disables script execution, commands and instance management.
+Without `--native-tools`, it leaves only `trace32_get_status`;
 it does not enable inspection tools. It is not an MMIO sandbox. Existing local
 clients that previously relied on native tools being enabled by default must
-add `--native-tools` after updating. See [capabilities and safety limits](local-capabilities.md).
+add `--native-tools` after updating. Native hardware requests accept `port`;
+specify a registered port when multiple instances are configured. The old
+execute/collect/abort API and `--t32chat` no longer apply; use the upstream
+`trace32_*` API and an explicit execution policy. See
+[capabilities and safety limits](local-capabilities.md).
 
 The client must be able to find uv's tool executable directory in `PATH`.
 If necessary, obtain the absolute executable path using
@@ -125,10 +133,10 @@ This creates a source distribution and a platform-specific wheel. The source
 distribution includes the Rust sources, Cargo lock file, native Remote API
 libraries, and both license texts.
 
-For a Windows x64 build of version `0.2.2`, install the resulting wheel:
+For a Windows x64 build of version `0.3.0`, install the resulting wheel:
 
 ```powershell
-uv tool install --force --no-index .\dist\t32mcp-0.2.2-py3-none-win_amd64.whl
+uv tool install --force --no-index .\dist\t32mcp-0.3.0-py3-none-win_amd64.whl
 t32mcp --help
 ```
 

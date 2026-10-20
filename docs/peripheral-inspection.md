@@ -2,8 +2,9 @@
 
 Both tools are optional local extensions. Start the server with
 `--native-tools` (add `--read-only` to hide execution tools) and confirm they
-appear in its tool list. The default three-tool PRACTICE mode does not expose
-them.
+appear in its tool list. The upstream policy-specific tool set does not expose
+them. All launches require `--execution-policy`. Native requests accept `port`;
+choose a registered port explicitly when multiple instances are configured.
 
 Tool advertisement only confirms the MCP interface. PER is chip- and
 session-dependent; not every chip/configuration supports it, and a compatible

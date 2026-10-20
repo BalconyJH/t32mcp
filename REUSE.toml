@@ -1,45 +1,16 @@
 version = 1
 
-# Warning: TRACE32 Remote API requires a separate license
 [[annotations]]
-path = "t32mcp-rs/**"
+path = "**"
 SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
 SPDX-License-Identifier = "Apache-2.0"
 
+# The optional native inspection backend still links the vendor Remote API.
 [[annotations]]
 path = "t32mcp-rs/lib/**"
+precedence = "override"
 SPDX-FileCopyrightText = "Copyright (C) 1998-2026 Lauterbach GmbH"
 SPDX-License-Identifier = "LicenseRef-Lauterbach-RemoteAPI"
-
-[[annotations]]
-path = "tests/**"
-SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
-SPDX-License-Identifier = "Apache-2.0"
-
-[[annotations]]
-path = "ci/**"
-SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
-SPDX-License-Identifier = "Apache-2.0"
-
-[[annotations]]
-path = ".claude/skills/skill-trace32/**"
-SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
-SPDX-License-Identifier = "Apache-2.0"
-
-[[annotations]]
-path = ".gitignore"
-SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
-SPDX-License-Identifier = "Apache-2.0"
-
-[[annotations]]
-path = ".gitlab-ci.yml"
-SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
-SPDX-License-Identifier = "Apache-2.0"
-
-[[annotations]]
-path = "*.md"
-SPDX-FileCopyrightText = "2026 Lauterbach GmbH"
-SPDX-License-Identifier = "Apache-2.0"
 
 [[annotations]]
 path = ["pyproject.toml", "docs/**"]
