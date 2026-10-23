@@ -26,6 +26,7 @@ pub mod inspection;
 pub mod mcp;
 pub mod peripheral_views;
 pub mod peripherals;
+pub mod request_budget;
 pub mod snapshot;
 pub mod t32;
 pub mod t32api;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -10,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use crate::request_budget::{self, RequestBudget};
 use crate::t32api::{Connection, T32_DEV_ICD};
 
 #[cfg(target_os = "windows")]
@@ -123,67 +125,63 @@ impl PowerView {
         }
     }
 
-    fn ensure_rcl_connected(&mut self) -> Result<(), String> {
-        if self.connection.is_none() {
-            let port = self.port;
-            let node = "127.0.0.1";
-            eprintln!("Connecting RCL: {}:{}", node, self.port);
+    fn ensure_rcl_connected(&mut self, deadline: Instant) -> Result<(), String> {
+        // At most one reconnect, sharing the caller's budget. A peer that
+        // immediately fails health checks must not cause recursive retries.
+        for attempt in 0..2 {
+            let remaining = request_budget::remaining(deadline)?;
+            if self.connection.is_none() {
+                let port = self.port;
+                eprintln!("Connecting RCL: 127.0.0.1:{port}");
+                let mut connection =
+                    Connection::connect("127.0.0.1", port, Some(remaining.min(DEFAULT_TIMEOUT)))?;
+                connection.set_deadline(Some(deadline));
+                connection.set_timeout(Some(HEALTH_CHECK_TIMEOUT))?;
+                connection
+                    .attach(T32_DEV_ICD as u8)
+                    .map_err(|e| format!("T32_Attach failed: {e}. PowerView does not respond, e.g. it is busy, hangs, or a modal dialog (DIALOG.OK, DIALOG.YESNO, DIALOG.File) blocks it (Linux). Ask the user to check PowerView and to close open dialogs."))?;
+                self.connection = Some(connection);
+            }
 
-            let mut connection =
-                match Connection::connect(node, port, Some(Duration::from_secs(60))) {
-                    Ok(con) => con,
-                    Err(e) => {
-                        eprintln!("Cannot connect to RCL on port {}: {}", port, e);
-                        return Err(e);
-                    }
-                };
-            // let mut connection =
-            //    Connection::connect("localhost", port, Some(Duration::from_secs(60)))
-            //        .map_err(|e| format!("port {port}: cannot connect: {e}"))?;
-            // A responsive PowerView answers at once. Do not wait the full
-            // connect timeout if it is busy or hangs.
-            connection.set_timeout(Some(HEALTH_CHECK_TIMEOUT))?;
-            connection
-                .attach(T32_DEV_ICD as u8)
-                .map_err(|e| format!("T32_Attach failed: {e}. PowerView does not respond, e.g. it is busy, hangs, or a modal dialog (DIALOG.OK, DIALOG.YESNO, DIALOG.File) blocks it (Linux). Ask the user to check PowerView and to close open dialogs."))?;
-            self.connection = Some(connection);
+            let connection = self.connection.as_mut().unwrap();
+            connection.set_deadline(Some(deadline));
+            let health = connection
+                .set_timeout(Some(HEALTH_CHECK_TIMEOUT))
+                .and_then(|()| connection.execute_function("PRACTICE.StackDepth()"));
+            if health.is_ok() {
+                connection.set_timeout(Some(DEFAULT_TIMEOUT))?;
+                eprintln!("RCL connection valid: {}", self.port);
+                return Ok(());
+            }
+
+            // Keep the pipe while reconnecting: PowerView may still write
+            // to it even when its Remote API is temporarily blocked.
+            self.connection = None;
+            if attempt == 1 {
+                return Err(format!("RCL health check failed: {}", health.unwrap_err()));
+            }
         }
-
-        eprintln!("RCL connection established: {}", self.port);
-        let connection = self.connection.as_mut().unwrap();
-        let alive = connection.set_timeout(Some(HEALTH_CHECK_TIMEOUT)).is_ok()
-            && connection.execute_function("PRACTICE.StackDepth()").is_ok();
-        if alive {
-            let _ = connection.set_timeout(Some(DEFAULT_TIMEOUT));
-            eprintln!("RCL connection valid: {}", self.port);
-            return Ok(());
-        }
-
-        // Keep the pipe: PowerView keeps writing to it while the Remote API
-        // is blocked, e.g. by a modal dialog on Linux. Without a reader, the
-        // script's next PRINT fails with "critical error accessing file pipe".
-        // After a restart of PowerView, the pipe check in
-        // try_ensure_connected finds it closed and pipes a new one.
-        self.connection = None;
-
-        self.ensure_rcl_connected()
+        unreachable!("the bounded reconnect loop returns on its final attempt")
     }
 
-    fn ensure_connected(&mut self) -> Result<(), String> {
+    fn ensure_connected(&mut self, deadline: Instant) -> Result<(), String> {
         // One retry: a stale pipe is replaced by a fresh one.
-        match self.try_ensure_connected() {
+        match self.try_ensure_connected(deadline) {
             Ok(()) => Ok(()),
-            Err(_) => self.try_ensure_connected(),
+            Err(_) => {
+                request_budget::remaining(deadline)?;
+                self.try_ensure_connected(deadline)
+            }
         }
     }
 
-    fn try_ensure_connected(&mut self) -> Result<(), String> {
-        self.ensure_rcl_connected()?;
+    fn try_ensure_connected(&mut self, deadline: Instant) -> Result<(), String> {
+        self.ensure_rcl_connected(deadline)?;
 
         // PowerView closed the pipe, e.g. after a restart or AREA.CLOSE:
         // pipe a new one.
         if let Some(stream) = self.stream.as_mut()
-            && pipe_ended(stream)
+            && pipe_ended(stream, deadline)
         {
             eprintln!("AREA output pipe was closed, piping a new one");
             self.stream = None;
@@ -255,10 +253,11 @@ impl PowerView {
                 .as_mut()
                 .expect("TRACE32 connection not established");
 
-            connection.execute_command(&format!("AREA.PIPE {MCP_AREA} {fifo_name}"))?;
+            let attached = connection.execute_command(&format!("AREA.PIPE {MCP_AREA} {fifo_name}"));
 
             // The receiver holds an open fd; unlink the path so it is cleaned up on close.
             let _ = std::fs::remove_file(&fifo_name);
+            attached?;
 
             self.stream = Some(stream);
             self.piped_area = Some(MCP_AREA.to_string());
@@ -281,9 +280,12 @@ impl PowerView {
 
         let verify_stream = self.stream.as_mut().expect("pipe stream not available");
         let mut buf = vec![0u8; 64 * 1024];
-        let verify_deadline = Instant::now() + HEALTH_CHECK_TIMEOUT;
+        let verify_deadline = deadline.min(Instant::now() + HEALTH_CHECK_TIMEOUT);
         let mut received = String::new();
         loop {
+            if Instant::now() >= verify_deadline {
+                break;
+            }
             match verify_stream.read(&mut buf) {
                 Ok(0) if pipe_closed(verify_stream) => break,
                 Ok(0) => {}
@@ -297,7 +299,11 @@ impl PowerView {
             if received.contains(PIPE_CHECK_MESSAGE) || Instant::now() >= verify_deadline {
                 break;
             }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(
+                verify_deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            );
         }
 
         if received.contains(PIPE_CHECK_MESSAGE) {
@@ -305,7 +311,7 @@ impl PowerView {
             return Ok(());
         }
 
-        self.detach_pipe();
+        self.detach_pipe_before(deadline);
         Err("AREA output pipe could not be verified".to_string())
     }
 
@@ -313,12 +319,16 @@ impl PowerView {
     /// FIFO without reader after t32mcp exits, and the next PRINT in a
     /// user's script fails with "critical error accessing file pipe".
     fn detach_pipe(&mut self) {
+        self.detach_pipe_before(Instant::now() + HEALTH_CHECK_TIMEOUT);
+    }
+
+    fn detach_pipe_before(&mut self, deadline: Instant) {
         if let (Some(connection), Some(area)) = (self.connection.as_mut(), self.piped_area.take()) {
+            connection.set_deadline(Some(deadline));
             let _ = connection.set_timeout(Some(HEALTH_CHECK_TIMEOUT));
             if area_exists(connection, &area).unwrap_or(false) {
                 let _ = connection.execute_command(&format!("AREA.CLOSE {area}"));
             }
-            let _ = connection.set_timeout(Some(DEFAULT_TIMEOUT));
         }
         self.stream = None;
     }
@@ -350,6 +360,7 @@ impl PowerView {
 
         let mut cores = Vec::new();
         for id in core_ids {
+            request_budget::remaining(deadline)?;
             // Per-core query: any error is reported as the core's "error"
             // entry instead of failing the whole instance.
             let core = (|| -> Result<Value, String> {
@@ -504,9 +515,7 @@ impl PowerView {
             (_, IfBusy::Nest) => {}
         }
 
-        // Do not wait longer than the tool timeout for an answer of PowerView
-        // while the script runs.
-        connection.set_timeout(Some(timeout.max(Duration::from_secs(1))))?;
+        connection.set_timeout(Some(request_budget::remaining(deadline)?))?;
 
         let original_core = connection.fnc_u32(deadline, timeout, "CORE()")?;
 
@@ -523,7 +532,7 @@ impl PowerView {
         // the user's work or of a timed-out script. They do not belong to
         // this call.
         if let Some(stream) = self.stream.as_mut() {
-            drain_pipe(stream);
+            drain_pipe(stream, deadline);
         }
         // A script runs with the device prompt selected in the PowerView command
         // line, e.g. "::" typed by the user: debugger commands then fail with
@@ -575,6 +584,7 @@ impl PowerView {
                 if closed
                     || output.trim_end().ends_with(&marker_for_pipe)
                     || stop_pipe.load(Ordering::Relaxed)
+                    || Instant::now() >= deadline
                 {
                     break;
                 }
@@ -583,7 +593,6 @@ impl PowerView {
             (output, stream, closed)
         });
 
-        let termination_deadline = Instant::now() + timeout;
         let mut marker_sent = false;
         let mut halted_polls = 0;
         let mut halt_reason = None;
@@ -591,6 +600,10 @@ impl PowerView {
         let mut switched_area = None;
         let mut t32_err: Result<(), String> = Ok(());
         loop {
+            if Instant::now() >= deadline {
+                stop.store(true, Ordering::SeqCst);
+                break;
+            }
             if !marker_sent {
                 match connection.execute_function("PRACTICE.StackDepth()") {
                     Ok((depth, _)) => {
@@ -662,11 +675,11 @@ impl PowerView {
             if pipe_handle.is_finished() {
                 break;
             }
-            if Instant::now() >= termination_deadline {
-                stop.store(true, Ordering::SeqCst);
-                break;
-            }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            );
         }
 
         let (output, stream, pipe_closed) = pipe_handle.join().expect("pipe thread panicked");
@@ -675,6 +688,15 @@ impl PowerView {
             self.piped_area = None;
         } else {
             self.stream = Some(stream);
+        }
+
+        // Expiry stops local waiting, not the remote script. Do not issue
+        // cleanup or state queries with a fresh timeout after this point.
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "{}\n\nOutput so far:\n{output}",
+                request_budget::unknown_completion()
+            ));
         }
 
         // Do not restore the core of a blocked PowerView: every further call
@@ -726,7 +748,11 @@ impl PowerView {
             }
         } else if pipe_closed {
             let mut message = "The AREA output pipe was closed, e.g. by AREA.CLOSE or AREA.RESet in the script. The output is incomplete.".to_string();
-            thread::sleep(Duration::from_millis(200));
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(200)),
+            );
             if let Ok(state) = practice_state(connection) {
                 if state["state"] == "error" {
                     if let Some(reason) = error_of(connection) {
@@ -780,9 +806,12 @@ fn area_exists(connection: &mut Connection, area: &str) -> Result<bool, String> 
 
 /// Discard the data that is available in the pipe now. Gives up after 64 MiB,
 /// e.g. if PowerView prints continuously.
-fn drain_pipe(stream: &mut PipeStream) {
+fn drain_pipe(stream: &mut PipeStream, deadline: Instant) {
     let mut buf = vec![0u8; 64 * 1024];
     for _ in 0..1024 {
+        if Instant::now() >= deadline {
+            break;
+        }
         match stream.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
@@ -792,9 +821,12 @@ fn drain_pipe(stream: &mut PipeStream) {
 
 /// Whether PowerView closed the pipe. Discards the data that is available
 /// now, like `drain_pipe`.
-fn pipe_ended(stream: &mut PipeStream) -> bool {
+fn pipe_ended(stream: &mut PipeStream, deadline: Instant) -> bool {
     let mut buf = vec![0u8; 64 * 1024];
     for _ in 0..1024 {
+        if Instant::now() >= deadline {
+            return false;
+        }
         match stream.read(&mut buf) {
             Ok(0) => return pipe_closed(stream),
             Ok(_) => {}
@@ -1050,6 +1082,29 @@ pub struct Worker {
 
 pub type NativeOperation = Box<dyn FnOnce(u16) -> Result<Value, String> + Send>;
 
+pub const WORKER_QUEUE_CAPACITY: usize = 16;
+
+pub struct QueuedRequest {
+    pub request: WorkerRequest,
+    pub budget: Arc<RequestBudget>,
+}
+
+pub struct TemporaryScript {
+    path: PathBuf,
+}
+
+impl TemporaryScript {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for TemporaryScript {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 pub enum WorkerRequest {
     /// Local native observations share this worker with script operations.
     /// Unlike scripts, they never try another instance on connection failure.
@@ -1060,6 +1115,7 @@ pub enum WorkerRequest {
     },
     ExecuteScript {
         script_path: String,
+        temporary_script: Option<TemporaryScript>,
         args: String,
         /// Remote API port of the instance. None: the first reachable one.
         port: Option<u16>,
@@ -1089,6 +1145,24 @@ pub enum WorkerRequest {
         action: InstanceAction,
         response_tx: mpsc::Sender<Result<serde_json::Value, String>>,
     },
+}
+
+impl WorkerRequest {
+    fn reject(self, error: String) {
+        match self {
+            Self::Native { response_tx, .. }
+            | Self::QueryTargetSystem { response_tx, .. }
+            | Self::ManageInstances { response_tx, .. } => {
+                let _ = response_tx.send(Err(error));
+            }
+            Self::ExecuteScript { response_tx, .. } => {
+                let _ = response_tx.send(Err(error));
+            }
+            Self::RunCommand { response_tx, .. } => {
+                let _ = response_tx.send(Err(error));
+            }
+        }
+    }
 }
 
 /// Action on the PowerView instances the worker talks to.
@@ -1163,7 +1237,12 @@ impl Worker {
 
     /// Add or remove an instance, then report all instances with their
     /// connection state.
-    fn manage_instances(&mut self, action: InstanceAction) -> Result<Value, String> {
+    fn manage_instances(
+        &mut self,
+        action: InstanceAction,
+        deadline: Instant,
+    ) -> Result<Value, String> {
+        request_budget::remaining(deadline)?;
         match action {
             InstanceAction::Inspect => {}
             InstanceAction::Add(port) => {
@@ -1179,14 +1258,14 @@ impl Worker {
                     .position(|i| i.port == port)
                     .ok_or_else(|| format!("No instance with port {port} is added"))?;
                 // Leave the instance without a pipe that nobody reads.
-                self.instances.remove(idx).detach_pipe();
+                self.instances.remove(idx).detach_pipe_before(deadline);
             }
         }
 
         let instances: Vec<Value> = self
             .instances
             .iter_mut()
-            .map(|instance| match instance.ensure_rcl_connected() {
+            .map(|instance| match instance.ensure_rcl_connected(deadline) {
                 Ok(()) => json!({ "port": instance.port, "state": "connected" }),
                 Err(e) => json!({ "port": instance.port, "state": "not reachable", "error": e }),
             })
@@ -1197,16 +1276,19 @@ impl Worker {
     /// All instances in order, each with its connection state. Reachable
     /// ones also report their PRACTICE state and their cores. Fails only if
     /// no instance is reachable.
-    fn query_target_system(&mut self, timeout: Duration) -> Result<Value, String> {
+    fn query_target_system(
+        &mut self,
+        deadline: Instant,
+        timeout: Duration,
+    ) -> Result<Value, String> {
         if self.instances.is_empty() {
             return Err(NO_INSTANCE.to_string());
         }
-        let deadline = Instant::now() + timeout;
         let mut instances = Vec::new();
         let mut conn_errors = Vec::new();
         for instance in &mut self.instances {
             let port = instance.port;
-            if let Err(e) = instance.ensure_rcl_connected() {
+            if let Err(e) = instance.ensure_rcl_connected(deadline) {
                 conn_errors.push(format!("port {port}: {e}"));
                 instances.push(json!({ "port": port, "state": "not reachable", "error": e }));
                 continue;
@@ -1242,26 +1324,35 @@ impl Worker {
 
     /// Serve requests until all senders are dropped, then detach the AREA
     /// output pipes.
-    pub fn run(&mut self, rx: mpsc::Receiver<WorkerRequest>) {
+    pub fn run(&mut self, rx: mpsc::Receiver<QueuedRequest>) {
         self.serve(rx);
         for instance in &mut self.instances {
             instance.detach_pipe();
         }
     }
 
-    fn serve(&mut self, rx: mpsc::Receiver<WorkerRequest>) {
-        for req in rx {
-            match req {
+    fn serve(&mut self, rx: mpsc::Receiver<QueuedRequest>) {
+        for QueuedRequest { request, budget } in rx {
+            if let Err(error) = budget.begin() {
+                request.reject(error);
+                continue;
+            }
+            let deadline = budget.deadline();
+            match request {
                 WorkerRequest::Native {
                     port,
                     operation,
                     response_tx,
                 } => {
-                    let result = self.native_port(port).and_then(operation);
+                    let result = self.native_port(port).and_then(|port| {
+                        request_budget::remaining(deadline)?;
+                        operation(port)
+                    });
                     let _ = response_tx.send(result);
                 }
                 WorkerRequest::ExecuteScript {
                     script_path,
+                    temporary_script: _temporary_script,
                     args,
                     port,
                     core,
@@ -1271,11 +1362,11 @@ impl Worker {
                     response_tx,
                 } => {
                     let result = (|| -> Result<String, String> {
-                        let deadline = Instant::now() + timeout;
                         let mut conn_errors = Vec::new();
                         for idx in self.execution_candidates(port)? {
+                            request_budget::remaining(deadline)?;
                             let instance = &mut self.instances[idx];
-                            match instance.ensure_connected() {
+                            match instance.ensure_connected(deadline) {
                                 Ok(()) => {
                                     return instance.execute_script(
                                         script_path,
@@ -1304,8 +1395,9 @@ impl Worker {
                     let result = (|| -> Result<(), String> {
                         let mut conn_errors = Vec::new();
                         for idx in self.execution_candidates(port)? {
+                            request_budget::remaining(deadline)?;
                             let instance = &mut self.instances[idx];
-                            match instance.ensure_connected() {
+                            match instance.ensure_connected(deadline) {
                                 Ok(()) => {
                                     return instance.run_command(&command, core, &device_prompt);
                                 }
@@ -1320,13 +1412,13 @@ impl Worker {
                     timeout,
                     response_tx,
                 } => {
-                    let _ = response_tx.send(self.query_target_system(timeout));
+                    let _ = response_tx.send(self.query_target_system(deadline, timeout));
                 }
                 WorkerRequest::ManageInstances {
                     action,
                     response_tx,
                 } => {
-                    let _ = response_tx.send(self.manage_instances(action));
+                    let _ = response_tx.send(self.manage_instances(action, deadline));
                 }
             }
         }
@@ -1336,6 +1428,13 @@ impl Worker {
 #[cfg(test)]
 mod native_worker_tests {
     use super::*;
+
+    fn queued(request: WorkerRequest) -> QueuedRequest {
+        QueuedRequest {
+            request,
+            budget: Arc::new(RequestBudget::new(Instant::now(), DEFAULT_TIMEOUT).unwrap()),
+        }
+    }
 
     #[test]
     fn execution_target_mode_preserves_legacy_and_single_instance_selection() {
@@ -1404,7 +1503,7 @@ mod native_worker_tests {
         for (sequence, port) in [Some(20000), None, Some(20001)].into_iter().enumerate() {
             let (response_tx, response_rx) = mpsc::channel();
             responses.push(response_rx);
-            tx.send(WorkerRequest::Native {
+            tx.send(queued(WorkerRequest::Native {
                 port,
                 operation: Box::new(move |port| {
                     assert_eq!(thread::current().id(), worker_thread);
@@ -1412,7 +1511,7 @@ mod native_worker_tests {
                     Ok(json!({"sequence": sequence, "port": port}))
                 }),
                 response_tx,
-            })
+            }))
             .unwrap();
         }
         drop(tx);
@@ -1432,5 +1531,158 @@ mod native_worker_tests {
             json!({"sequence": 2, "port": 20001})
         );
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn expired_queued_operations_never_run_or_change_the_registry() {
+        use std::sync::atomic::AtomicUsize;
+
+        let mut worker = Worker::new(vec![20000]);
+        let (tx, rx) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
+        let handle = thread::spawn(move || {
+            worker.serve(rx);
+            worker
+        });
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (first_tx, first_rx) = mpsc::channel();
+        tx.send(queued(WorkerRequest::Native {
+            port: None,
+            operation: Box::new(move |_| {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(Value::Null)
+            }),
+            response_tx: first_tx,
+        }))
+        .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let operation_calls = Arc::clone(&calls);
+        let (second_tx, second_rx) = mpsc::channel();
+        let second = queued(WorkerRequest::Native {
+            port: None,
+            operation: Box::new(move |_| {
+                operation_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Value::Null)
+            }),
+            response_tx: second_tx,
+        });
+        let second_budget = Arc::clone(&second.budget);
+        tx.send(second).unwrap();
+        assert!(second_budget.expire().contains("not_started"));
+
+        let (manage_tx, manage_rx) = mpsc::channel();
+        tx.send(QueuedRequest {
+            request: WorkerRequest::ManageInstances {
+                action: InstanceAction::Add(20001),
+                response_tx: manage_tx,
+            },
+            budget: Arc::new(RequestBudget::new(Instant::now(), Duration::ZERO).unwrap()),
+        })
+        .unwrap();
+        release_tx.send(()).unwrap();
+        drop(tx);
+        first_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        for response in [second_rx, manage_rx] {
+            assert!(
+                response
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap()
+                    .unwrap_err()
+                    .contains("not_started")
+            );
+        }
+        let worker = handle.join().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(worker.instances.len(), 1);
+        assert_eq!(worker.instances[0].port, 20000);
+        assert!(worker.instances[0].connection.is_none());
+    }
+
+    #[test]
+    fn timing_out_started_work_does_not_cancel_or_retry_it() {
+        use std::sync::atomic::AtomicUsize;
+
+        let mut worker = Worker::new(vec![20000]);
+        let (tx, rx) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
+        let handle = thread::spawn(move || worker.serve(rx));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (response_tx, response_rx) = mpsc::channel();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let operation_calls = Arc::clone(&calls);
+        let request = queued(WorkerRequest::Native {
+            port: None,
+            operation: Box::new(move |_| {
+                operation_calls.fetch_add(1, Ordering::SeqCst);
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(Value::Null)
+            }),
+            response_tx,
+        });
+        let budget = Arc::clone(&request.budget);
+        tx.send(request).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(budget.expire().contains("unknown_completion"));
+        drop(response_rx);
+        release_tx.send(()).unwrap();
+        drop(tx);
+        handle.join().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn queued_temporary_scripts_survive_caller_expiry_and_are_cleaned_on_rejection() {
+        let path = std::env::temp_dir().join(format!(
+            "t32mcp-owned-script-{}-{}.cmm",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        std::fs::write(&path, "ENDDO\n").unwrap();
+        let mut worker = Worker::new(vec![20000]);
+        let (tx, rx) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (first_tx, _first_rx) = mpsc::channel();
+        let handle = thread::spawn(move || worker.serve(rx));
+        tx.send(queued(WorkerRequest::Native {
+            port: None,
+            operation: Box::new(move |_| {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(Value::Null)
+            }),
+            response_tx: first_tx,
+        }))
+        .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let (response_tx, response_rx) = mpsc::channel();
+        let request = queued(WorkerRequest::ExecuteScript {
+            script_path: path.to_string_lossy().into_owned(),
+            temporary_script: Some(TemporaryScript::new(path.clone())),
+            args: String::new(),
+            port: None,
+            core: None,
+            timeout: DEFAULT_TIMEOUT,
+            if_busy: IfBusy::Fail,
+            device_prompt: "B::".to_string(),
+            response_tx,
+        });
+        let budget = Arc::clone(&request.budget);
+        tx.send(request).unwrap();
+        assert!(budget.expire().contains("not_started"));
+        assert!(path.exists(), "a queued job must still own its script");
+        drop(response_rx);
+        release_tx.send(()).unwrap();
+        drop(tx);
+        handle.join().unwrap();
+        assert!(!path.exists(), "rejected jobs must clean up their scripts");
     }
 }

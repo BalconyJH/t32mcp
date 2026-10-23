@@ -274,8 +274,9 @@ pub fn trace32_run_script(
             format!("{}\n\n{text}", warnings.join("\n"))
         }
     };
-    match worker_call(ctx, |tx| t32::WorkerRequest::ExecuteScript {
+    match worker_call(ctx, timeout, |tx| t32::WorkerRequest::ExecuteScript {
         script_path,
+        temporary_script: None,
         args: args_str,
         port,
         core,
@@ -401,7 +402,7 @@ fn run_script_input_schema(policy: execution_policy::ExecutionPolicy) -> mcp::To
         "timeout".to_string(),
         serde_json::json!({
             "type": "integer",
-            "description": "Maximum time in seconds to wait for the script to finish (default: 5)",
+            "description": "End-to-end request deadline in seconds, including queueing and connection (default: 5). Stops waiting, but cannot cancel an in-progress vendor API call or terminate PRACTICE.",
             "default": 5
         }),
     );

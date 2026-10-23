@@ -101,7 +101,7 @@ pub fn trace32_run_command(
             );
         }
 
-        return match worker_call(ctx, |tx| t32::WorkerRequest::RunCommand {
+        return match worker_call(ctx, timeout, |tx| t32::WorkerRequest::RunCommand {
             command: command.to_string(),
             port,
             core,
@@ -133,9 +133,11 @@ pub fn trace32_run_command(
     }
 
     let script_path = path.to_string_lossy().to_string();
+    let temporary_script = t32::TemporaryScript::new(path);
 
-    let result = worker_call(ctx, |tx| t32::WorkerRequest::ExecuteScript {
+    let result = worker_call(ctx, timeout, |tx| t32::WorkerRequest::ExecuteScript {
         script_path,
+        temporary_script: Some(temporary_script),
         args: String::new(),
         port,
         core,
@@ -144,8 +146,6 @@ pub fn trace32_run_command(
         device_prompt,
         response_tx: tx,
     });
-    let _ = std::fs::remove_file(&path);
-
     match result {
         Ok(Ok(text)) if text.trim().is_empty() => text_result(
             "Done. The command printed nothing. Only PRINT and WinPrint.<command> output is returned: a window command like Register.view only opens a window in PowerView.",
@@ -185,7 +185,7 @@ pub fn entry() -> ToolEntry {
                         },
                         "timeout": {
                             "type": "integer",
-                            "description": "Maximum time in seconds to wait for the command to finish (default: 5, only used with collect_output)",
+                            "description": "End-to-end request deadline in seconds, including queueing and connection (default: 5). Applies with either collect_output setting. Stops waiting, but cannot cancel an in-progress vendor API call or terminate PRACTICE.",
                             "default": 5
                         },
                         "if_busy": {

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Lauterbach GmbH
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Mutex, MutexGuard, mpsc};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::time::{Duration, Instant};
 
+use t32mcp::request_budget::RequestBudget;
 use t32mcp::t32;
 
 /// All tests use the same PowerView instance, which runs only one script at a
@@ -23,6 +24,18 @@ fn t32_port() -> u16 {
         .unwrap_or(20000)
 }
 
+fn queued(request: t32::WorkerRequest) -> t32::QueuedRequest {
+    let timeout = match &request {
+        t32::WorkerRequest::ExecuteScript { timeout, .. }
+        | t32::WorkerRequest::QueryTargetSystem { timeout, .. } => *timeout,
+        _ => Duration::from_secs(60),
+    };
+    t32::QueuedRequest {
+        request,
+        budget: Arc::new(RequestBudget::new(Instant::now(), timeout).unwrap()),
+    }
+}
+
 #[test]
 fn connect() {
     let _guard = t32_lock();
@@ -34,6 +47,7 @@ fn connect() {
     let (tx, rx) = mpsc::channel();
     let request = t32::WorkerRequest::ExecuteScript {
         script_path,
+        temporary_script: None,
         args: " \"1.\"".to_string(),
         port: None,
         core: None,
@@ -43,8 +57,8 @@ fn connect() {
         response_tx: tx,
     };
 
-    let (worker_tx, worker_rx) = mpsc::channel::<t32::WorkerRequest>();
-    worker_tx.send(request).unwrap();
+    let (worker_tx, worker_rx) = mpsc::channel::<t32::QueuedRequest>();
+    worker_tx.send(queued(request)).unwrap();
 
     std::thread::spawn(move || {
         worker.run(worker_rx);
@@ -67,6 +81,7 @@ fn print() {
     let (tx, rx) = mpsc::channel();
     let request = t32::WorkerRequest::ExecuteScript {
         script_path,
+        temporary_script: None,
         args: format!(" \"{}.\"", expected_lines),
         port: None,
         core: None,
@@ -76,8 +91,8 @@ fn print() {
         response_tx: tx,
     };
 
-    let (worker_tx, worker_rx) = mpsc::channel::<t32::WorkerRequest>();
-    worker_tx.send(request).unwrap();
+    let (worker_tx, worker_rx) = mpsc::channel::<t32::QueuedRequest>();
+    worker_tx.send(queued(request)).unwrap();
 
     std::thread::spawn(move || {
         worker.run(worker_rx);
@@ -102,6 +117,7 @@ fn winprint() {
     let (tx, rx) = mpsc::channel();
     let request = t32::WorkerRequest::ExecuteScript {
         script_path,
+        temporary_script: None,
         args: format!(" \"{}.\"", repeat),
         port: None,
         core: None,
@@ -111,8 +127,8 @@ fn winprint() {
         response_tx: tx,
     };
 
-    let (worker_tx, worker_rx) = mpsc::channel::<t32::WorkerRequest>();
-    worker_tx.send(request).unwrap();
+    let (worker_tx, worker_rx) = mpsc::channel::<t32::QueuedRequest>();
+    worker_tx.send(queued(request)).unwrap();
 
     std::thread::spawn(move || {
         worker.run(worker_rx);
@@ -229,10 +245,10 @@ fn busy() {
     // A running script cannot be nested on.
     let err = execute(&worker, "loop.cmm", t32::IfBusy::Fail).expect_err("should time out");
     assert!(
-        err.contains("keeps running"),
-        "expected running note, got: {err}"
+        err.contains("unknown_completion"),
+        "timeout must not claim remote completion, got: {err}"
     );
-    assert!(err.contains("loop.cmm:"), "expected location, got: {err}");
+    assert!(err.contains("Do not automatically retry"), "got: {err}");
     let err = execute(&worker, "print.cmm", t32::IfBusy::Nest).expect_err("should refuse");
     assert!(
         err.contains("Cannot nest"),
@@ -265,21 +281,21 @@ fn area_switch() {
     for command in ["AREA.Select A000", "AREA.Delete t32mcp_test_area"] {
         let (tx, rx) = mpsc::channel();
         worker
-            .send(t32::WorkerRequest::RunCommand {
+            .send(queued(t32::WorkerRequest::RunCommand {
                 command: command.to_string(),
                 port: None,
                 core: None,
                 device_prompt: "B::".to_string(),
                 response_tx: tx,
-            })
+            }))
             .unwrap();
         let _ = rx.recv();
     }
 }
 
-fn start_worker() -> mpsc::Sender<t32::WorkerRequest> {
+fn start_worker() -> mpsc::Sender<t32::QueuedRequest> {
     let mut worker = t32::Worker::new(vec![t32_port()]);
-    let (worker_tx, worker_rx) = mpsc::channel::<t32::WorkerRequest>();
+    let (worker_tx, worker_rx) = mpsc::channel::<t32::QueuedRequest>();
     std::thread::spawn(move || {
         worker.run(worker_rx);
     });
@@ -287,14 +303,15 @@ fn start_worker() -> mpsc::Sender<t32::WorkerRequest> {
 }
 
 fn execute(
-    worker: &mpsc::Sender<t32::WorkerRequest>,
+    worker: &mpsc::Sender<t32::QueuedRequest>,
     script: &str,
     if_busy: t32::IfBusy,
 ) -> Result<String, String> {
     let (tx, rx) = mpsc::channel();
     worker
-        .send(t32::WorkerRequest::ExecuteScript {
+        .send(queued(t32::WorkerRequest::ExecuteScript {
             script_path: format!("{}/tests/{script}", env!("CARGO_MANIFEST_DIR")),
+            temporary_script: None,
             args: String::new(),
             port: None,
             core: None,
@@ -302,23 +319,23 @@ fn execute(
             if_busy,
             device_prompt: "B::".to_string(),
             response_tx: tx,
-        })
+        }))
         .unwrap();
     rx.recv()
         .expect("worker thread dropped the response channel")
 }
 
 /// Terminate paused scripts, so they do not affect later tests.
-fn end_scripts(worker: &mpsc::Sender<t32::WorkerRequest>) {
+fn end_scripts(worker: &mpsc::Sender<t32::QueuedRequest>) {
     let (tx, rx) = mpsc::channel();
     worker
-        .send(t32::WorkerRequest::RunCommand {
+        .send(queued(t32::WorkerRequest::RunCommand {
             command: "END".to_string(),
             port: None,
             core: None,
             device_prompt: "B::".to_string(),
             response_tx: tx,
-        })
+        }))
         .unwrap();
     rx.recv()
         .expect("worker thread dropped the response channel")
@@ -334,6 +351,7 @@ fn error() {
     let (tx, rx) = mpsc::channel();
     let request = t32::WorkerRequest::ExecuteScript {
         script_path,
+        temporary_script: None,
         args: String::new(),
         port: None,
         core: None,
@@ -343,8 +361,8 @@ fn error() {
         response_tx: tx,
     };
 
-    let (worker_tx, worker_rx) = mpsc::channel::<t32::WorkerRequest>();
-    worker_tx.send(request).unwrap();
+    let (worker_tx, worker_rx) = mpsc::channel::<t32::QueuedRequest>();
+    worker_tx.send(queued(request)).unwrap();
 
     std::thread::spawn(move || {
         worker.run(worker_rx);
@@ -374,6 +392,7 @@ fn close() {
     let (tx, rx) = mpsc::channel();
     let request = t32::WorkerRequest::ExecuteScript {
         script_path,
+        temporary_script: None,
         args: String::new(),
         port: None,
         core: None,
@@ -383,8 +402,8 @@ fn close() {
         response_tx: tx,
     };
 
-    let (worker_tx, worker_rx) = mpsc::channel::<t32::WorkerRequest>();
-    worker_tx.send(request).unwrap();
+    let (worker_tx, worker_rx) = mpsc::channel::<t32::QueuedRequest>();
+    worker_tx.send(queued(request)).unwrap();
 
     std::thread::spawn(move || {
         worker.run(worker_rx);
@@ -398,13 +417,13 @@ fn close() {
     // the closed AREA "new" selected, so PRINT output would be invisible.
     let (tx, rx) = mpsc::channel();
     worker_tx
-        .send(t32::WorkerRequest::RunCommand {
+        .send(queued(t32::WorkerRequest::RunCommand {
             command: "AREA.Select A000".to_string(),
             port: None,
             core: None,
             device_prompt: "B::".to_string(),
             response_tx: tx,
-        })
+        }))
         .unwrap();
     let _ = rx.recv();
 
@@ -424,10 +443,10 @@ fn query() {
     // with their TRACE32 core number. Exactly one core is selected.
     let (tx, rx) = mpsc::channel();
     worker
-        .send(t32::WorkerRequest::QueryTargetSystem {
+        .send(queued(t32::WorkerRequest::QueryTargetSystem {
             timeout: Duration::from_secs(5),
             response_tx: tx,
-        })
+        }))
         .unwrap();
     let result = rx.recv().unwrap().expect("should succeed");
     let instance = &result["instances"][0];
@@ -443,13 +462,13 @@ fn query() {
     // An unknown port is an error, not a fallback to another instance.
     let (tx, rx) = mpsc::channel();
     worker
-        .send(t32::WorkerRequest::RunCommand {
+        .send(queued(t32::WorkerRequest::RunCommand {
             command: "PRINT 1".to_string(),
             port: Some(1),
             core: None,
             device_prompt: "B::".to_string(),
             response_tx: tx,
-        })
+        }))
         .unwrap();
     let err = rx.recv().unwrap().expect_err("should fail");
     assert!(err.contains("No instance with port 1"), "got: {err}");

@@ -68,6 +68,37 @@ port explicitly for multiple instances; offline catalog/diff requests do not
 connect. This safeguard does not authorize a script, make it read-only, or
 establish the target's identity.
 
+## Request deadlines and overload
+
+A request's waiting budget begins when its tool handler receives the request.
+It covers request processing, worker-queue waiting, connection/setup and
+script/command polling, rather than restarting after each phase. Script,
+command and status tools retain their parsed `timeout` argument and existing
+defaults. `--request-timeout SECONDS` sets the budget for instance management
+and native requests; its default is `60`, and the value must be positive and
+finite. For example, add `--request-timeout 30` to the server's startup
+arguments for a 30-second budget on those tools.
+
+The shared worker queue holds at most 16 waiting requests. Overload and
+deadline errors distinguish:
+
+- `not_started`: a full queue rejected the request, or its deadline expired
+  before the worker began it. An expired queued request will never dispatch.
+- `unknown_completion`: the request began before its caller stopped waiting.
+  It may still be executing, or may have completed without a timely response.
+  This is not a cancellation or a confirmed failure of the target operation.
+
+Native `timeout_ms` arguments remain separate soft limits for their polling or
+batch helpers; they do not replace the outer request budget. A shorter outer
+budget can stop the caller's wait while a native call continues.
+
+All instances still share one worker. A blocked vendor FFI call cannot be
+interrupted by these budgets, can delay other requests, and is not isolated in
+a child process. There is no remote cancellation or automatic retry. Do not
+resubmit an operation with `unknown_completion` without independently
+establishing what happened; repeating scripts or commands can duplicate target
+side effects.
+
 ## Target-specific support
 
 Do not reuse a test board's CPU selection, debug port, memory map, register
@@ -300,8 +331,12 @@ recent 1000 observations with a dropped-sample count. A missed condition returns
 calls; a blocked native call cannot be interrupted by Tokio. A match returned
 after a slow call can have `matched: true` and `deadline_exceeded: true`.
 Other tool calls wait behind an active condition poll. Upstream script timeouts
-do not provide a hard FFI timeout for native tools. Restart the
-MCP process if the vendor API itself becomes unresponsive.
+and the outer request budget do not provide a hard FFI timeout for native
+tools. A caller may stop waiting with `unknown_completion` while the vendor
+call continues; queued requests can expire with `not_started`. See
+[request deadlines and overload](#request-deadlines-and-overload). Restart the
+MCP process if the vendor API itself becomes unresponsive; a restart is not
+proof that an already-started target operation was canceled.
 
 ## PRACTICE compatibility and limits
 

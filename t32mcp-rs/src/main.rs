@@ -11,8 +11,14 @@
 //! for us, so we use serde for serialization.
 
 use std::{
-    collections::VecDeque, io::Write, net::IpAddr, net::SocketAddr, path::PathBuf,
-    process::ExitCode, sync::mpsc,
+    collections::VecDeque,
+    io::Write,
+    net::IpAddr,
+    net::SocketAddr,
+    path::PathBuf,
+    process::ExitCode,
+    sync::mpsc,
+    time::{Duration, Instant},
 };
 
 use serde_json::Deserializer;
@@ -48,6 +54,7 @@ fn jsonrpc_error(req: &mcp::JsonrpcRequest, code: i64, message: &str) -> serde_j
 }
 
 fn process_request(req: &mcp::JsonrpcRequest, ctx: &mut tools::Context) -> serde_json::Value {
+    ctx.request_started = Instant::now();
     eprintln!("processing request {}: {}", req.id, req.method);
     match req.method.as_str() {
         "initialize" => {
@@ -500,6 +507,10 @@ PowerView Connection:
   --require-explicit-target
                            Require request port for scripts and commands when
                            multiple PowerView instances are registered
+  --request-timeout SECONDS
+                           End-to-end wait limit for native/instance requests
+                           (default: 60; finite positive seconds). Script,
+                           command and status requests use their own timeout
 
 Local Native Extensions (opt-in):
   --native-tools           Enable 14 local native inspection/evidence tools
@@ -510,6 +521,8 @@ Local Native Extensions (opt-in):
 Native hardware requests accept an optional port; with multiple registered
 instances it is required. Native calls share the script worker and never
 auto-halt or retry. --read-only is not a sandbox for expressions or PER/MMIO.
+Deadlines include queueing and connection, but cannot cancel blocked vendor
+calls. If processing started, completion and target state may remain unknown.
 Legacy --t32chat has been replaced by --execution-policy unrestricted."
     );
 }
@@ -527,6 +540,19 @@ fn configured_ports(
     Ok(ports)
 }
 
+fn parse_request_timeout(argument: &str) -> Result<Duration, &'static str> {
+    let invalid = "--request-timeout requires finite positive seconds within the supported range";
+    let seconds = argument.parse::<f64>().map_err(|_| invalid)?;
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Err(invalid);
+    }
+    let timeout = Duration::try_from_secs_f64(seconds).map_err(|_| invalid)?;
+    if timeout.is_zero() || Instant::now().checked_add(timeout).is_none() {
+        return Err(invalid);
+    }
+    Ok(timeout)
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut bind_address: IpAddr = "127.0.0.1".parse().expect("default is valid");
@@ -540,6 +566,7 @@ fn main() -> ExitCode {
     let mut native_tools = false;
     let mut read_only = false;
     let mut require_explicit_target = false;
+    let mut request_timeout = Duration::from_secs(60);
     let mut native_options = native::NativeOptions::default();
 
     while let Some(arg) = args.next() {
@@ -555,6 +582,19 @@ fn main() -> ExitCode {
             "--native-tools" => native_tools = true,
             "--read-only" => read_only = true,
             "--require-explicit-target" => require_explicit_target = true,
+            "--request-timeout" => {
+                let Some(value) = args.next() else {
+                    eprintln!("error: --request-timeout requires seconds");
+                    return ExitCode::from(2);
+                };
+                request_timeout = match parse_request_timeout(&value) {
+                    Ok(timeout) => timeout,
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        return ExitCode::from(2);
+                    }
+                };
+            }
             "--target-config" => {
                 let Some(path) = args.next() else {
                     eprintln!("error: --target-config requires a JSON file");
@@ -809,8 +849,20 @@ fn main() -> ExitCode {
         }
     }
 
+    instructions.push_str(&format!(
+        "\nWorker requests have end-to-end deadlines that include queueing and connection. \
+         Script, command and status requests use their timeout argument (default: 5 seconds); \
+         native and instance-management requests use --request-timeout ({} seconds). \
+         An expired queued request is not_started and cannot execute later. If work already \
+         started, timeout reports unknown_completion: it only stops waiting, does not cancel \
+         an in-progress vendor API call or terminate PRACTICE, and target state is unknown. \
+         Do not automatically retry. Worker queue saturation rejects requests as not_started.\n",
+        request_timeout.as_secs_f64(),
+    ));
+
     let mut worker = t32::Worker::new(t32_ports).with_explicit_target(require_explicit_target);
-    let (worker_tx, worker_rx) = mpsc::channel::<t32::WorkerRequest>();
+    let (worker_tx, worker_rx) =
+        mpsc::sync_channel::<t32::QueuedRequest>(t32::WORKER_QUEUE_CAPACITY);
     let worker_handle = std::thread::spawn(move || {
         worker.run(worker_rx);
     });
@@ -822,6 +874,8 @@ fn main() -> ExitCode {
         skill_roots,
         read_only,
         native: native_tools.then_some(native_options),
+        request_started: Instant::now(),
+        request_timeout,
         tools,
         worker_tx,
     };
@@ -853,6 +907,42 @@ mod tests {
                 configured_ports(policy, vec![20001, 20002]).unwrap(),
                 vec![20001, 20002]
             );
+        }
+    }
+
+    #[test]
+    fn request_timeout_accepts_finite_positive_seconds() {
+        assert_eq!(
+            parse_request_timeout("60").unwrap(),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            parse_request_timeout("0.025").unwrap(),
+            Duration::from_millis(25)
+        );
+        assert_eq!(
+            parse_request_timeout("1e-9").unwrap(),
+            Duration::from_nanos(1)
+        );
+    }
+
+    #[test]
+    fn request_timeout_rejects_nonpositive_nonfinite_and_overflow_values() {
+        for value in [
+            "",
+            "bad",
+            "0",
+            "-1",
+            "-0",
+            "NaN",
+            "inf",
+            "-inf",
+            "1e999",
+            "1e300",
+            "18446744073709551616",
+            "1e-99",
+        ] {
+            assert!(parse_request_timeout(value).is_err(), "{value}");
         }
     }
 }

@@ -35,9 +35,11 @@ pub fn trace32_manage_instances(
         _ => return error_result("action must be \"inspect\", \"add\" or \"remove\""),
     };
 
-    match worker_call(ctx, |tx| t32::WorkerRequest::ManageInstances {
-        action,
-        response_tx: tx,
+    match worker_call(ctx, ctx.request_timeout, |tx| {
+        t32::WorkerRequest::ManageInstances {
+            action,
+            response_tx: tx,
+        }
     }) {
         Ok(Ok(json)) => call_result(
             serde_json::to_string_pretty(&json).unwrap_or_default(),

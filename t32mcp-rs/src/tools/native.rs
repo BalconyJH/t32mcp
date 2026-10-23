@@ -127,18 +127,20 @@ fn hardware(
     operation: impl FnOnce(u16, Result<(), String>) -> Result<Value, String> + Send + 'static,
 ) -> Result<Value, String> {
     options(ctx)?;
-    worker_call(ctx, |response_tx| t32::WorkerRequest::Native {
-        port,
-        operation: Box::new(move |port| {
-            // The channel is created, used and freed on this one worker thread.
-            // A failed observation is never retried on this or another instance.
-            let _cleanup = ConnectionCleanup;
-            let connection = crate::t32_connect(port);
-            let mut value = operation(port, connection)?;
-            value["instance_port"] = json!(port);
-            Ok(value)
-        }),
-        response_tx,
+    worker_call(ctx, ctx.request_timeout, |response_tx| {
+        t32::WorkerRequest::Native {
+            port,
+            operation: Box::new(move |port| {
+                // The channel is created, used and freed on this one worker thread.
+                // A failed observation is never retried on this or another instance.
+                let _cleanup = ConnectionCleanup;
+                let connection = crate::t32_connect(port);
+                let mut value = operation(port, connection)?;
+                value["instance_port"] = json!(port);
+                Ok(value)
+            }),
+            response_tx,
+        }
     })?
 }
 
@@ -438,7 +440,7 @@ pub fn entries() -> Vec<ToolEntry> {
     vec![
         entry::<EmptyRequest>(
             "doctor",
-            "Diagnose the configured local TRACE32 endpoint with one lazy connection attempt, independent status queries and optional PER.FILENAME() metadata detection. --target-config declarations take precedence; disabled PER is not probed. A filename does not prove PER read support. Returns structured stages, native errors, capability provenance and hints even when PowerView is absent. Never retries, halts, resets, scans ports, loads PER files or probes target memory. Native calls still have no hard timeout.",
+            "Diagnose the configured local TRACE32 endpoint with one lazy connection attempt, independent status queries and optional PER.FILENAME() metadata detection. --target-config declarations take precedence; disabled PER is not probed. A filename does not prove PER read support. Returns structured stages, native errors, capability provenance and hints even when PowerView is absent. Never retries, halts, resets, scans ports, loads PER files or probes target memory. The server request deadline limits caller waiting but cannot interrupt a blocked vendor API call.",
             doctor,
             true,
             true,
@@ -540,10 +542,14 @@ pub fn entries() -> Vec<ToolEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::VecDeque, sync::mpsc};
+    use std::{
+        collections::VecDeque,
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
 
-    fn context(native: bool) -> (Context, mpsc::Receiver<t32::WorkerRequest>) {
-        let (worker_tx, worker_rx) = mpsc::channel();
+    fn context(native: bool) -> (Context, mpsc::Receiver<t32::QueuedRequest>) {
+        let (worker_tx, worker_rx) = mpsc::sync_channel(t32::WORKER_QUEUE_CAPACITY);
         (
             Context {
                 event_queue: VecDeque::new(),
@@ -552,6 +558,8 @@ mod tests {
                 skill_roots: Vec::new(),
                 read_only: false,
                 native: native.then(NativeOptions::default),
+                request_started: Instant::now(),
+                request_timeout: Duration::from_secs(60),
                 tools: Vec::new(),
                 worker_tx,
             },

@@ -127,6 +127,14 @@ registered. A `core` alone is not an instance selector. Without this flag,
 upstream's automatic instance selection remains compatible; native selection
 rules remain unchanged. See [target selection](docs/local-capabilities.md#target-selection).
 
+Requests have end-to-end waiting budgets, including the shared worker queue
+and connection setup. Script, command and status tools retain their `timeout`
+argument; `--request-timeout SECONDS` sets the budget for instance management
+and native tools (default `60`). An expired queued request is `not_started`;
+an expired started request has `unknown_completion`, not confirmed
+cancellation. Blocking vendor calls cannot be interrupted and must not be
+automatically retried. See [request deadlines](docs/local-capabilities.md#request-deadlines-and-overload).
+
 Migration from the previous local build requires `--execution-policy`.
 The old execute/collect/abort tool API is replaced by `trace32_run_script` and
 the other upstream tools; `--t32chat` is replaced by the explicit

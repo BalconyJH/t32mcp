@@ -61,6 +61,8 @@ fn align_up(n: usize, m: usize) -> usize {
 /// A TCP connection to the TRACE32 Remote API of a PowerView instance.
 pub struct Connection {
     socket: TcpStream,
+    socket_timeout: Option<Duration>,
+    deadline: Option<Instant>,
     socket_content: Vec<u8>,
     response_queue: VecDeque<Vec<u8>>,
     /// Notification messages are not used by this client, but must be
@@ -93,6 +95,8 @@ impl Connection {
 
         Ok(Connection {
             socket,
+            socket_timeout: timeout,
+            deadline: None,
             socket_content: Vec::new(),
             response_queue: VecDeque::new(),
             notify_queue: VecDeque::new(),
@@ -102,6 +106,38 @@ impl Connection {
 
     /// Adjust the read/write timeout of the underlying socket.
     pub fn set_timeout(&mut self, timeout: Option<Duration>) -> Result<(), String> {
+        self.socket
+            .set_read_timeout(timeout)
+            .map_err(|e| format!("cannot set read timeout: {e}"))?;
+        self.socket
+            .set_write_timeout(timeout)
+            .map_err(|e| format!("cannot set write timeout: {e}"))?;
+        self.socket_timeout = timeout;
+        Ok(())
+    }
+
+    /// Set or clear the absolute deadline applied to subsequent socket I/O.
+    pub fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
+    }
+
+    fn set_socket_timeout_for_io(&self) -> Result<(), String> {
+        let deadline_timeout = match self.deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err("request deadline exceeded".to_string());
+                }
+                Some(remaining)
+            }
+            None => None,
+        };
+        let timeout = match (self.socket_timeout, deadline_timeout) {
+            (Some(current), Some(remaining)) => Some(current.min(remaining)),
+            (Some(current), None) => Some(current),
+            (None, Some(remaining)) => Some(remaining),
+            (None, None) => None,
+        };
         self.socket
             .set_read_timeout(timeout)
             .map_err(|e| format!("cannot set read timeout: {e}"))?;
@@ -130,9 +166,19 @@ impl Connection {
         buf.extend_from_slice(data);
         buf.resize(HEADER_LEN + size + padding, 0);
 
-        self.socket
-            .write_all(&buf)
-            .map_err(|e| format!("transmit failed: {e}"))
+        let mut written = 0;
+        while written < buf.len() {
+            self.set_socket_timeout_for_io()?;
+            match self.socket.write(&buf[written..]) {
+                Ok(0) => {
+                    return Err("transmit failed: connection closed while writing".to_string());
+                }
+                Ok(n) => written += n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(format!("transmit failed: {e}")),
+            }
+        }
+        Ok(())
     }
 
     fn extract_messages(&mut self) -> Result<(), String> {
@@ -172,10 +218,14 @@ impl Connection {
 
     fn poll_response(&mut self) -> Result<(), String> {
         let mut buf = [0u8; PACKLEN];
-        let n = self
-            .socket
-            .read(&mut buf)
-            .map_err(|e| format!("receive failed: {e}"))?;
+        let n = loop {
+            self.set_socket_timeout_for_io()?;
+            match self.socket.read(&mut buf) {
+                Ok(n) => break n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(format!("receive failed: {e}")),
+            }
+        };
         if n == 0 {
             return Err("connection closed by peer".to_string());
         }
@@ -186,6 +236,12 @@ impl Connection {
     fn receive(&mut self) -> Result<Vec<u8>, String> {
         let message_id = self.current_message_id();
         loop {
+            if self
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                return Err("request deadline exceeded".to_string());
+            }
             match self.response_queue.pop_front() {
                 Some(message) => {
                     if message.len() < 2 {
@@ -670,5 +726,119 @@ fn parse_exp_response(exp: &[u8]) -> Result<Vec<u8>, String> {
             (None, Some(code)) => format!("extended protocol call failed (code {code})"),
             (None, None) => "extended protocol call failed".to_string(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+    use std::io::Read;
+    use std::net::TcpListener;
+    use std::thread;
+
+    fn connected_pair() -> (Connection, TcpStream) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accept = thread::spawn(move || listener.accept().unwrap().0);
+        let connection =
+            Connection::connect("127.0.0.1", port, Some(Duration::from_secs(1))).unwrap();
+        (connection, accept.join().unwrap())
+    }
+
+    fn read_request(stream: &mut TcpStream) {
+        let mut request = [0; 24];
+        stream.read_exact(&mut request).unwrap();
+    }
+
+    fn send_success_response(stream: &mut TcpStream, request_id: u8) {
+        let mut response = Vec::from([
+            2,
+            0,
+            0,
+            0,
+            T32_NETTCP_RCL_RESP as u8,
+            0,
+            0,
+            0,
+            T32_ERR_OK,
+            request_id,
+        ]);
+        response.resize(16, 0);
+        stream.write_all(&response).unwrap();
+    }
+
+    #[test]
+    fn expired_deadline_prevents_socket_send() {
+        let (mut connection, mut peer) = connected_pair();
+        peer.set_read_timeout(Some(Duration::from_millis(120)))
+            .unwrap();
+        connection.set_deadline(Some(Instant::now() - Duration::from_millis(1)));
+
+        let error = connection.execute_command("NOOP").unwrap_err();
+        assert!(error.contains("deadline exceeded"));
+        let mut byte = [0];
+        let error = peer.read(&mut byte).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ));
+    }
+
+    #[test]
+    fn reused_connection_accepts_a_replacement_deadline() {
+        let (mut connection, mut peer) = connected_pair();
+        connection.set_deadline(Some(Instant::now() - Duration::from_millis(1)));
+        assert!(connection.execute_command("NOOP").is_err());
+
+        let server = thread::spawn(move || {
+            read_request(&mut peer);
+            send_success_response(&mut peer, 2);
+        });
+        connection.set_deadline(Some(Instant::now() + Duration::from_secs(1)));
+        connection.execute_command("NOOP").unwrap();
+        server.join().unwrap();
+        connection.set_deadline(None);
+    }
+
+    #[test]
+    fn blackholed_response_obeys_absolute_deadline() {
+        let (mut connection, mut peer) = connected_pair();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            read_request(&mut peer);
+            let _ = release_rx.recv_timeout(Duration::from_secs(2));
+        });
+        connection.set_deadline(Some(Instant::now() + Duration::from_millis(120)));
+
+        let started = Instant::now();
+        assert!(connection.execute_command("NOOP").is_err());
+        let elapsed = started.elapsed();
+        let _ = release_tx.send(());
+        server.join().unwrap();
+        assert!(elapsed < Duration::from_millis(600));
+    }
+
+    #[test]
+    fn trickled_response_bytes_do_not_extend_deadline() {
+        let (mut connection, mut peer) = connected_pair();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            read_request(&mut peer);
+            peer.set_nodelay(true).unwrap();
+            for _ in 0..100 {
+                if stop_rx.recv_timeout(Duration::from_millis(20)).is_ok() {
+                    return;
+                }
+                peer.write_all(&[0]).unwrap();
+            }
+        });
+        connection.set_deadline(Some(Instant::now() + Duration::from_millis(120)));
+
+        let started = Instant::now();
+        let _error = connection.execute_command("NOOP").unwrap_err();
+        let elapsed = started.elapsed();
+        let _ = stop_tx.send(());
+        server.join().unwrap();
+        assert!(elapsed < Duration::from_millis(600));
     }
 }

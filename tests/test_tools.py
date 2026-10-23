@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -303,15 +304,25 @@ async def test_discover_skills_without_a_debugger(native_mcp_server, skills_base
 
 async def test_status_with_absent_debugger_is_bounded(local_mcp_server, offline_port):
     async with local_mcp_server as client:
+        started = time.monotonic()
         result = await asyncio.wait_for(
             client.call_tool(
                 "trace32_get_status", {"timeout": 1}, raise_on_error=False
             ),
             timeout=10,
         )
+        elapsed = time.monotonic() - started
     assert result.is_error
+    assert elapsed < 3, elapsed
     text = result_text(result)
-    assert str(offline_port) in text
+    # Some platforms refuse the connection immediately; others consume the
+    # one-second request budget before a port-specific error can be returned.
+    if "Request deadline exceeded" in text:
+        assert "(not_started)" in text or "(unknown_completion)" in text
+        if "(unknown_completion)" in text:
+            assert "Do not automatically retry" in text
+    else:
+        assert f"port {offline_port}:" in text
     assert "127.0.0.1:20000" not in text
 
 

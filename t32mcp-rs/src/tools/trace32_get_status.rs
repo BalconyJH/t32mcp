@@ -17,9 +17,10 @@ pub fn trace32_get_status(
         .and_then(|a| a.get("timeout"))
         .and_then(|v| v.as_u64())
         .unwrap_or(5);
+    let timeout = Duration::from_secs(timeout_secs);
 
-    match worker_call(ctx, |tx| t32::WorkerRequest::QueryTargetSystem {
-        timeout: Duration::from_secs(timeout_secs),
+    match worker_call(ctx, timeout, |tx| t32::WorkerRequest::QueryTargetSystem {
+        timeout,
         response_tx: tx,
     }) {
         Ok(Ok(json)) => call_result(
@@ -44,7 +45,7 @@ pub fn entry() -> ToolEntry {
                     "properties": {
                         "timeout": {
                             "type": "integer",
-                            "description": "Maximum time in seconds to wait for the query to finish (default: 5)",
+                            "description": "End-to-end request deadline in seconds, including queueing and connection (default: 5). Stops waiting, but cannot cancel an in-progress vendor API call.",
                             "default": 5
                         }
                     },
