@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -288,7 +288,7 @@ fn reject_link_components(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn validate_open_file_path(file: &File) -> Result<(), String> {
+fn validate_open_file_path(file: &fs::File) -> Result<(), String> {
     use std::os::windows::io::AsRawHandle;
 
     #[link(name = "kernel32")]
