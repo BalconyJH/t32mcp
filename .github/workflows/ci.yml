@@ -1,0 +1,101 @@
+name: Offline Checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  native:
+    name: Native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: ${{ github.workspace }}/t32mcp-rs/target
+      RUSTUP_TOOLCHAIN: "1.96.0"
+      UV_NO_ENV_FILE: "1"
+      # Do not let runner settings enable hardware tests or reuse old artifacts.
+      T32MCP: ""
+      T32MCP_HARDWARE: ""
+      T32MCP_T32_PORT: ""
+      T32MCP_WHEEL: ""
+      T32MCP_SDIST: ""
+      T32MCP_TOKEN: ""
+      T32_PORT: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@2ddd2b9cb38ad8efd50337e8ab201519a34c9f24 # v7.1.1
+        with:
+          version: "0.12.17"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: tests/uv.lock
+
+      - name: Install pinned Rust tools
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy --no-self-update
+          rustc --version
+          cargo --version
+
+      - name: Install libclang (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
+
+      - name: Locate libclang (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:ProgramFiles "LLVM\bin"
+          if (-not (Test-Path -LiteralPath (Join-Path $directory "libclang.dll"))) {
+            throw "The Windows runner must provide the LLVM libclang runtime"
+          }
+          "LIBCLANG_PATH=$directory" >> $env:GITHUB_ENV
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path t32mcp-rs/Cargo.toml --all -- --check
+
+      - name: Lint all Rust targets
+        run: cargo clippy --manifest-path t32mcp-rs/Cargo.toml --locked --all-targets --all-features -- -D warnings
+
+      - name: Run hardware-free Rust tests
+        run: cargo test --manifest-path t32mcp-rs/Cargo.toml --locked --all-features --lib --bin t32mcp
+
+      - name: Compile integrations without executing hardware tests
+        run: cargo test --manifest-path t32mcp-rs/Cargo.toml --locked --all-features --all-targets --no-run
+
+      - name: Build native debug executable
+        run: cargo build --manifest-path t32mcp-rs/Cargo.toml --locked
+
+      - name: Check CI helper
+        run: uv run --no-project --python 3.14 python -m unittest discover -s ci -p 'test_*.py'
+
+      - name: Prepare locked Python environment
+        run: |
+          uv python install 3.13
+          uv sync --project tests --locked
+
+      - name: Run offline Python suite against debug executable
+        run: uv run --project tests --locked --offline pytest tests
+
+      - name: Build archives and test installed wheel
+        run: uv run --no-project --python 3.14 python ci/verify_packages.py
