@@ -82,7 +82,6 @@ pub async fn t32_open_pipe(
         .map_err(|e| format!("Cannot create named pipe: {e}"))?;
 
     let area = t32_fnc(r"AREA.SELECTed()".to_string())?;
-    t32_cmd(format!("AREA.OPEN {area}"))?;
     let name = format!("\\\\.\\pipe\\{name}");
     t32_cmd(format!(r"AREA.PIPE {} {}", area, name))?;
 
@@ -106,7 +105,6 @@ pub async fn t32_open_pipe(name: &str) -> Result<Receiver, String> {
     }
 
     let area = t32_fnc(r"AREA.SELECTed()".to_string())?;
-    t32_cmd(format!("AREA.OPEN {area}"))?;
     t32_cmd(format!(r"AREA.PIPE {} {}", area, &fifo_name))?;
 
     let connection = match pipe::OpenOptions::new().open_receiver(&fifo_name) {

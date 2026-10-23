@@ -3,11 +3,33 @@
 
 """Collection must not discover or contact a connected hardware session."""
 
+import re
 import runpy
 import socket
 from pathlib import Path
 
 import pytest
+
+
+@pytest.mark.parametrize(
+    "platform", ['target_os = "windows"', 'not(target_os = "windows")']
+)
+def test_area_pipe_setup_does_not_open_output_files(platform):
+    """Check both platform branches without connecting to a debugger."""
+    source = (
+        Path(__file__).resolve().parents[1] / "t32mcp-rs" / "src" / "lib.rs"
+    ).read_text(encoding="utf-8")
+    definition = re.search(
+        rf"#\[cfg\({re.escape(platform)}\)\]\npub async fn t32_open_pipe\b.*?^\}}",
+        source,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    assert definition is not None
+    setup = definition.group()
+    assert "AREA.SELECTed()" in setup
+    assert setup.count("AREA.PIPE ") == 1
+    # AREA.OPEN takes a filename; a lone area name creates <area>.txt.
+    assert "AREA.OPEN" not in setup
 
 
 @pytest.mark.parametrize(
