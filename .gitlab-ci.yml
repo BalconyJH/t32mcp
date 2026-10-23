@@ -104,14 +104,14 @@ test:
 # `test`. Uses Astral's prebuilt uv+python image.
 test:integration:
   extends: .rust-check
-  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  image: ghcr.io/astral-sh/uv:python3.14-bookworm-slim
   needs:
     - test
   cache: []
   before_script: []
   script:
     - cd tests
-    - uv run pytest
+    - uv run --locked pytest
 
 # Release gate: only present when a release is requested via RELEASE_VERSION.
 # Runs in the first stage so a version mismatch or missing CHANGELOG section

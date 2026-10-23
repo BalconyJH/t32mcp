@@ -1,0 +1,6 @@
+# Keep this in sync with t32mcp-rs/rust-toolchain.toml and CI's RUST_IMAGE.
+# The root pin also applies to builds launched by uv or Maturin.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-pc-windows-msvc", "aarch64-unknown-linux-gnu"]

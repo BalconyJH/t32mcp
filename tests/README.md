@@ -2,7 +2,8 @@
 
 ## Offline regression tests
 
-Build the server before running pytest. From the repository root:
+Use Python 3.14 or newer and Rust 1.96.0, then build the server before running
+pytest. From the repository root:
 
 ```powershell
 Set-Location .\t32mcp-rs
@@ -43,10 +44,13 @@ uv run --locked pytest
 
 Use the actual artifact paths. Archive checks are skipped when their
 variables are absent. Packaging checks can also run independently from the
-repository root with `python .\tests\test_packaging.py`.
+repository root with
+`uv run --no-project --python 3.14 python .\tests\test_packaging.py`.
 
-Use the toolchain pinned in `t32mcp-rs/rust-toolchain.toml` and the prerequisites
-in [installation](../docs/installation.md).
+The repository-root and crate `rust-toolchain.toml` files both select Rust
+1.96.0. uv selects Python 3.14 using the repository's `.python-version`;
+the test project's metadata also requires Python 3.14 or newer. See the
+remaining prerequisites in [installation](../docs/installation.md).
 
 ## Opt-in hardware checks
 

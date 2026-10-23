@@ -39,6 +39,38 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(self.config["tool"]["maturin"]["bindings"], "bin")
         self.assertTrue(self.config["tool"]["maturin"]["locked"])
 
+    def test_python_minimum_version_and_defaults(self):
+        self.assertEqual(self.config["project"]["requires-python"], ">=3.14")
+        with (ROOT / "tests" / "pyproject.toml").open("rb") as stream:
+            test_config = tomllib.load(stream)
+        with (ROOT / "tests" / "uv.lock").open("rb") as stream:
+            test_lock = tomllib.load(stream)
+        self.assertEqual(
+            test_config["project"]["requires-python"],
+            self.config["project"]["requires-python"],
+        )
+        self.assertEqual(
+            test_lock["requires-python"], self.config["project"]["requires-python"]
+        )
+        for directory in (ROOT, ROOT / "tests"):
+            with self.subTest(directory=directory):
+                self.assertEqual(
+                    (directory / ".python-version").read_text().strip(), "3.14"
+                )
+        self.assertIn(
+            "image: ghcr.io/astral-sh/uv:python3.14-bookworm-slim",
+            (ROOT / ".gitlab-ci.yml").read_text(),
+        )
+
+    def test_rust_minimum_version_and_toolchains(self):
+        self.assertEqual(self.cargo["package"]["rust-version"], "1.96")
+        toolchains = []
+        for directory in (ROOT, ROOT / "t32mcp-rs"):
+            with (directory / "rust-toolchain.toml").open("rb") as stream:
+                toolchains.append(tomllib.load(stream)["toolchain"])
+        self.assertEqual(toolchains[0], toolchains[1])
+        self.assertEqual(toolchains[0]["channel"], "1.96.0")
+
     def test_license_metadata(self):
         self.assertEqual(
             self.config["project"]["license"],
@@ -61,6 +93,9 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(metadata["Name"], self.config["project"]["name"])
             self.assertEqual(metadata["Version"], self.cargo["package"]["version"])
             self.assertEqual(
+                metadata["Requires-Python"], self.config["project"]["requires-python"]
+            )
+            self.assertEqual(
                 metadata["License-Expression"], self.config["project"]["license"]
             )
             self.assertEqual(set(metadata.get_all("License-File", [])), LICENSE_FILES)
@@ -82,8 +117,21 @@ class PackagingTests(unittest.TestCase):
     def test_sdist_contents(self):
         with tarfile.open(os.environ["T32MCP_SDIST"], "r:*") as archive:
             names = {name.partition("/")[2] for name in archive.getnames()}
+            metadata_members = [
+                member
+                for member in archive.getmembers()
+                if member.name.partition("/")[2] == "PKG-INFO"
+            ]
+            self.assertEqual(len(metadata_members), 1)
+            with archive.extractfile(metadata_members[0]) as stream:
+                metadata = email.message_from_bytes(stream.read())
+            self.assertEqual(
+                metadata["Requires-Python"], self.config["project"]["requires-python"]
+            )
         required = LICENSE_FILES | {
+            ".python-version",
             "pyproject.toml",
+            "rust-toolchain.toml",
             "README.md",
             "docs/installation.md",
             "docs/local-capabilities.md",
@@ -143,6 +191,12 @@ class PackagingTests(unittest.TestCase):
                 if member.isfile()
             }
             sources = [
+                ROOT / ".python-version",
+                ROOT / "pyproject.toml",
+                ROOT / "rust-toolchain.toml",
+                ROOT / "t32mcp-rs" / "Cargo.toml",
+                ROOT / "t32mcp-rs" / "Cargo.lock",
+                ROOT / "t32mcp-rs" / "rust-toolchain.toml",
                 *(ROOT / "t32mcp-rs" / "src").rglob("*.rs"),
                 *(ROOT / "t32mcp-rs" / "src" / "docs").glob("*.md"),
                 *(ROOT / "t32mcp-rs").glob("mcp_*.json"),

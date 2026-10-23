@@ -10,7 +10,7 @@ name = "t32mcp"
 dynamic = ["version"]
 description = "Local TRACE32 MCP server backed by the native Rust executable"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 license = "Apache-2.0 AND LicenseRef-Lauterbach-RemoteAPI"
 license-files = [
     "LICENSES/Apache-2.0.txt",
@@ -28,6 +28,8 @@ manifest-path = "t32mcp-rs/Cargo.toml"
 bindings = "bin"
 locked = true
 include = [
+    { path = ".python-version", format = "sdist" },
+    { path = "rust-toolchain.toml", format = "sdist" },
     { path = "LICENSES/*.txt", format = "sdist" },
     { path = "t32mcp-rs/lib/**/*", format = "sdist" },
     { path = "t32mcp-rs/Cargo.lock", format = "sdist" },
@@ -42,6 +44,7 @@ include = [
 [tool.uv]
 cache-keys = [
     { file = "pyproject.toml" },
+    { file = "rust-toolchain.toml" },
     { file = "t32mcp-rs/Cargo.toml" },
     { file = "t32mcp-rs/Cargo.lock" },
     { file = "t32mcp-rs/build.rs" },

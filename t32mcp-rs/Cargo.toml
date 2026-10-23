@@ -3,6 +3,7 @@ name = "t32mcp"
 version = "0.3.0"
 license = "Apache-2.0"
 edition = "2024"
+rust-version = "1.96"
 
 [build-dependencies]
 bindgen = "0.72.1"

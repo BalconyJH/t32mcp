@@ -48,6 +48,9 @@ SETUP.API.RCL.Enable /PRotocol TCP /Port 20000. /RemoteHost DENY
 
 Download `t32mcp` from the [prebuilt releases](https://gitlab.com/lauterbach/t32mcp/-/releases) or build it from source:
 
+Source builds require Rust 1.96 or newer. The repository and crate both pin
+Rust 1.96.0, so rustup selects the same toolchain from either directory.
+
 ```
 $ cargo build --manifest-path t32mcp-rs/Cargo.toml --release
 ```
@@ -91,8 +94,9 @@ uv tool install .
 t32mcp --execution-policy scripts --skills "C:\path\to\t32mcp\skills"
 ```
 
-Source installation requires the pinned Rust toolchain, a native linker and
-libclang. A matching prebuilt local wheel does not require those build tools.
+uv installation requires Python 3.14 or newer. Source installation also
+requires the pinned Rust 1.96.0 toolchain, a native linker and libclang.
+A matching prebuilt local wheel does not require those build tools.
 See [installation](docs/installation.md) for complete prerequisites and local
 wheel/source archive commands; nothing is published to a package index.
 

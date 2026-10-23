@@ -3,7 +3,7 @@ name = "t32mcp-test"
 version = "0.1.0"
 description = "Test environment for t32mcp"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "fastmcp>=3.2.4",
     "pytest>=9.0.3",

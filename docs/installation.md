@@ -14,7 +14,7 @@ is an additional guard against accidental PyPI publication.
 
 For installation from a matching prebuilt wheel:
 
-- uv and Python 3.10 or newer.
+- uv and Python 3.14 or newer.
 - For debugger operations, a running TRACE32 instance with its TCP Remote API
   enabled. The server default is `20000`; use `--port` when your session uses
   another port. Installation and `--help` do not require a debugger or board.
@@ -26,8 +26,8 @@ For installation from a matching prebuilt wheel:
 
 For a build from this checkout or a source distribution:
 
-- The Rust toolchain specified in `t32mcp-rs/rust-toolchain.toml` (currently
-  `1.96.0`).
+- Rust 1.96 or newer. The toolchain files at the repository root and in
+  `t32mcp-rs/` both pin `1.96.0` for reproducible local and CI builds.
 - On Windows x64, Visual Studio Build Tools with the C++ build tools and a
   Windows SDK. Run build commands from a Developer PowerShell for Visual Studio
   so that the MSVC linker and SDK are available.
@@ -47,15 +47,16 @@ In Developer PowerShell, adjust these paths for your checkout and LLVM install:
 
 ```powershell
 Set-Location C:\path\to\t32mcp
-$env:RUSTUP_TOOLCHAIN = "1.96.0"
 $env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
 uv tool install --force .
 t32mcp --help
 ```
 
-`RUSTUP_TOOLCHAIN` selects the crate's pinned toolchain even though the Python
-project lives one directory above `rust-toolchain.toml`. This environment
-variable only changes the current shell and its child processes.
+The root `rust-toolchain.toml` selects Rust 1.96.0 for package builds, without
+changing rustup's global default or requiring `RUSTUP_TOOLCHAIN`. If you set
+that variable previously, clear it or use `1.96.0` so it does not override the
+repository pin. The root `.python-version` selects Python 3.14 for uv; package
+metadata also rejects Python versions below 3.14.
 
 After changing Rust source, rerun `uv tool install --force --reinstall .`.
 Installing a native binary is not an editable source installation.
@@ -130,8 +131,9 @@ uv build --out-dir .\dist
 ```
 
 This creates a source distribution and a platform-specific wheel. The source
-distribution includes the Rust sources, Cargo lock file, native Remote API
-libraries, and both license texts.
+distribution includes the Rust sources, Cargo lock file, both Rust toolchain
+pins, the Python version selection, native Remote API libraries, and both
+license texts.
 
 For a Windows x64 build of version `0.3.0`, install the resulting wheel:
 
@@ -155,11 +157,11 @@ For an isolated installation test without replacing an existing user tool, set
 both `UV_TOOL_DIR` and `UV_TOOL_BIN_DIR` to temporary directories in the current
 shell before running `uv tool install`. Clear or restore them afterwards.
 
-The packaging checks require Python 3.11 or newer for `tomllib`, and run without
+The packaging checks require Python 3.14 or newer, and run without
 a board or third-party Python dependencies:
 
 ```powershell
-python .\tests\test_packaging.py
+uv run --no-project --python 3.14 python .\tests\test_packaging.py
 ```
 
 Set `T32MCP_WHEEL` and `T32MCP_SDIST` to artifact paths to also verify the built
