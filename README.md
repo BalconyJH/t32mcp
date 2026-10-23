@@ -121,6 +121,12 @@ declares session PER capabilities; `--artifacts` selects an absolute directory
 for evidence saved only on explicit request. These options do not enable native
 tools by themselves.
 
+For multi-instance sessions, opt in to `--require-explicit-target` to require a
+request `port` for scripts and commands whenever multiple instances are
+registered. A `core` alone is not an instance selector. Without this flag,
+upstream's automatic instance selection remains compatible; native selection
+rules remain unchanged. See [target selection](docs/local-capabilities.md#target-selection).
+
 Migration from the previous local build requires `--execution-policy`.
 The old execute/collect/abort tool API is replaced by `trace32_run_script` and
 the other upstream tools; `--t32chat` is replaced by the explicit

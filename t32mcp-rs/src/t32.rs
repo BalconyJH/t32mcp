@@ -1045,6 +1045,7 @@ fn describe_practice(state: &Value) -> String {
 
 pub struct Worker {
     instances: Vec<PowerView>,
+    require_explicit_target: bool,
 }
 
 pub type NativeOperation = Box<dyn FnOnce(u16) -> Result<Value, String> + Send>;
@@ -1108,7 +1109,13 @@ impl Worker {
     pub fn new(t32_ports: Vec<u16>) -> Self {
         Self {
             instances: t32_ports.into_iter().map(PowerView::new).collect(),
+            require_explicit_target: false,
         }
+    }
+
+    pub fn with_explicit_target(mut self, required: bool) -> Self {
+        self.require_explicit_target = required;
+        self
     }
 
     /// The instances a request may run on, in order: the one with `port`,
@@ -1142,6 +1149,16 @@ impl Worker {
             );
         }
         Ok(self.instances[candidates[0]].port)
+    }
+
+    fn execution_candidates(&self, port: Option<u16>) -> Result<Vec<usize>, String> {
+        if self.require_explicit_target && port.is_none() && self.instances.len() > 1 {
+            return Err(
+                "Multiple PowerView instances are registered; --require-explicit-target requires an explicit port for script and command execution"
+                    .to_string(),
+            );
+        }
+        self.candidates(port)
     }
 
     /// Add or remove an instance, then report all instances with their
@@ -1256,7 +1273,7 @@ impl Worker {
                     let result = (|| -> Result<String, String> {
                         let deadline = Instant::now() + timeout;
                         let mut conn_errors = Vec::new();
-                        for idx in self.candidates(port)? {
+                        for idx in self.execution_candidates(port)? {
                             let instance = &mut self.instances[idx];
                             match instance.ensure_connected() {
                                 Ok(()) => {
@@ -1286,7 +1303,7 @@ impl Worker {
                 } => {
                     let result = (|| -> Result<(), String> {
                         let mut conn_errors = Vec::new();
-                        for idx in self.candidates(port)? {
+                        for idx in self.execution_candidates(port)? {
                             let instance = &mut self.instances[idx];
                             match instance.ensure_connected() {
                                 Ok(()) => {
@@ -1319,6 +1336,46 @@ impl Worker {
 #[cfg(test)]
 mod native_worker_tests {
     use super::*;
+
+    #[test]
+    fn execution_target_mode_preserves_legacy_and_single_instance_selection() {
+        let worker = Worker::new(vec![20000, 20001]);
+        assert_eq!(worker.execution_candidates(None).unwrap(), vec![0, 1]);
+        let worker = Worker::new(vec![20000]).with_explicit_target(true);
+        assert_eq!(worker.execution_candidates(None).unwrap(), vec![0]);
+        assert_eq!(worker.execution_candidates(Some(20000)).unwrap(), vec![0]);
+        assert!(worker.execution_candidates(Some(20001)).is_err());
+        assert!(
+            Worker::new(Vec::new())
+                .with_explicit_target(true)
+                .execution_candidates(None)
+                .unwrap_err()
+                .contains("No PowerView instance")
+        );
+    }
+
+    #[test]
+    fn execution_target_mode_uses_the_current_instance_registry_without_connecting() {
+        let mut worker = Worker::new(vec![20000]).with_explicit_target(true);
+        worker.instances.push(PowerView::new(20001));
+        assert!(
+            worker
+                .execution_candidates(None)
+                .unwrap_err()
+                .contains("explicit port")
+        );
+        assert_eq!(worker.execution_candidates(Some(20001)).unwrap(), vec![1]);
+        assert!(worker.execution_candidates(Some(20002)).is_err());
+        worker.instances.remove(0);
+        assert_eq!(worker.execution_candidates(None).unwrap(), vec![0]);
+        assert_eq!(worker.instances[0].port, 20001);
+        assert!(
+            worker
+                .instances
+                .iter()
+                .all(|instance| instance.connection.is_none())
+        );
+    }
 
     #[test]
     fn native_requires_an_unambiguous_registered_instance() {

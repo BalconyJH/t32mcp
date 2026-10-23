@@ -497,6 +497,9 @@ PowerView Connection:
                            \"strict\" execution policy mode).
   --skills DIR             Root location of agent skills (repeatable,
                            required by execution policy \"strict\")
+  --require-explicit-target
+                           Require request port for scripts and commands when
+                           multiple PowerView instances are registered
 
 Local Native Extensions (opt-in):
   --native-tools           Enable 14 local native inspection/evidence tools
@@ -536,6 +539,7 @@ fn main() -> ExitCode {
     let mut skills_source = docs::DEFAULT_SKILLS_SOURCE.to_string();
     let mut native_tools = false;
     let mut read_only = false;
+    let mut require_explicit_target = false;
     let mut native_options = native::NativeOptions::default();
 
     while let Some(arg) = args.next() {
@@ -550,6 +554,7 @@ fn main() -> ExitCode {
             }
             "--native-tools" => native_tools = true,
             "--read-only" => read_only = true,
+            "--require-explicit-target" => require_explicit_target = true,
             "--target-config" => {
                 let Some(path) = args.next() else {
                     eprintln!("error: --target-config requires a JSON file");
@@ -783,8 +788,28 @@ fn main() -> ExitCode {
              select one implicitly. Save evidence only when explicitly requested.\n",
         );
     }
+    if require_explicit_target {
+        instructions.push_str(
+            "\nLocal --require-explicit-target is active. Script and command requests \
+             must specify a registered port whenever multiple PowerView instances exist. \
+             Ambiguous execution is rejected without connecting to any instance.\n",
+        );
+        for entry in &mut tools {
+            if matches!(
+                entry.tool.name.as_str(),
+                "trace32_run_script" | "trace32_run_command"
+            ) && let Some(description) = &mut entry.tool.description
+            {
+                description.push_str(
+                    "\nWith this server's --require-explicit-target option, port is \
+                     required when multiple instances are registered; omitted ports \
+                     are rejected instead of trying another instance.",
+                );
+            }
+        }
+    }
 
-    let mut worker = t32::Worker::new(t32_ports);
+    let mut worker = t32::Worker::new(t32_ports).with_explicit_target(require_explicit_target);
     let (worker_tx, worker_rx) = mpsc::channel::<t32::WorkerRequest>();
     let worker_handle = std::thread::spawn(move || {
         worker.run(worker_rx);

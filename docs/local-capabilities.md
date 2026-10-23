@@ -38,6 +38,36 @@ different core. `list_practice_skills` and `diff_snapshots` remain offline.
 Capability declarations apply to the server session; use separate servers when
 instances need different declarations.
 
+## Target selection
+
+`--require-explicit-target` is an opt-in safeguard for the upstream script and
+command tools. When multiple PowerView ports are registered, every
+`trace32_run_script` or `trace32_run_command` request must provide its intended
+`port`. A `core` does not identify a PowerView instance, and command requests
+with `collect_output: false` still require `port`. Ambiguous requests are refused
+without selecting or probing another endpoint.
+
+For example, after replacing these illustrative ports with the approved
+sessions' actual ports:
+
+```powershell
+t32mcp --execution-policy scripts --require-explicit-target `
+  --port 20000 --port 20001 --skills C:\path\to\skills
+```
+
+A script request must then name its selected instance:
+
+```json
+{"port": 20000, "script_path": "C:\\approved\\script.cmm"}
+```
+
+With one registered instance, requests may still omit `port`. The existing
+default port and automatic script/command selection remain unchanged when the
+flag is absent. Native tools retain their existing rules: select a registered
+port explicitly for multiple instances; offline catalog/diff requests do not
+connect. This safeguard does not authorize a script, make it read-only, or
+establish the target's identity.
+
 ## Target-specific support
 
 Do not reuse a test board's CPU selection, debug port, memory map, register
