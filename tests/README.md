@@ -37,8 +37,8 @@ before running pytest from `tests`:
 
 ```powershell
 $env:T32MCP = (Get-Command t32mcp).Source
-$env:T32MCP_WHEEL = (Resolve-Path "..\dist\t32mcp-0.3.0-py3-none-win_amd64.whl").Path
-$env:T32MCP_SDIST = (Resolve-Path "..\dist\t32mcp-0.3.0.tar.gz").Path
+$env:T32MCP_WHEEL = (Resolve-Path "..\dist\t32mcp-0.3.1-py3-none-win_amd64.whl").Path
+$env:T32MCP_SDIST = (Resolve-Path "..\dist\t32mcp-0.3.1.tar.gz").Path
 uv run --locked pytest
 ```
 
@@ -70,9 +70,20 @@ Remove-Item Env:T32MCP_HARDWARE
 Remove-Item Env:T32MCP_T32_PORT
 ```
 
+`T32MCP_T32_PORT` has no default for these tests and must be an integer from 1
+to 65535. Invalid values fail before any connection or process startup. After
+both opt-ins, the fixture reuses PowerView on the selected localhost port. If
+it is unreachable and `T32SYS` names a TRACE32 installation, the fixture starts
+a headless RISC-V Instruction Set Simulator using `sim.t32`, records its output
+in the pytest temporary directory, and closes that owned process afterwards.
+Executable selection supports Windows, Linux x64/arm64, and macOS. Set `T32SYS`
+before the example above to allow this fallback; without it, an unreachable
+endpoint causes a skip.
+
 These are not read-only checks. Use a disposable simulator/session approved
 for script execution. With either setting absent, collection and default
-pytest runs skip them without probing any debugger.
+pytest runs skip them without probing any debugger or starting a simulator,
+even when `T32SYS` is set. An already running PowerView is left running.
 See [contract fixtures](contract/README.md) for their compatibility guarantee.
 
 Hardware helpers require an explicit invocation and a session port. Set

@@ -16,6 +16,12 @@ the AREA, errors via `ON ERROR`.
   explicitly approved session port, then run `uv run pytest test_contract.py`
   in `tests/`. The same opt-in gates `test_device_prompt.py`.
 - Without both variables the tests are skipped without probing a port, even
-  during collection. After explicit opt-in they are skipped if the selected
-  PowerView is unreachable. Use a disposable simulator/session: these tests
-  execute PRACTICE, create windows, and change the device prompt.
+  during collection, or starting a simulator. `T32SYS` alone never enables
+  them. There is no default port; invalid ports fail before I/O.
+- After explicit opt-in, the fixture reuses the selected PowerView. If it is
+  unreachable and `T32SYS` is set, it starts a headless RISC-V Instruction Set
+  Simulator from that installation using `tests/sim.t32` and closes only that
+  owned process afterwards. Without either a reachable session or `T32SYS`,
+  the tests skip. See [test setup](../README.md).
+- Use a disposable simulator/session: these tests execute PRACTICE, create
+  windows, and change the device prompt.

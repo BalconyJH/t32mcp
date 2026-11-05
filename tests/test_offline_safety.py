@@ -36,12 +36,17 @@ def test_area_pipe_setup_does_not_open_output_files(platform):
     ("enabled", "port"),
     [(None, None), (None, "20000"), ("0", "20000"), ("1", None)],
 )
-def test_contract_collection_requires_both_explicit_opt_ins(monkeypatch, enabled, port):
+@pytest.mark.parametrize("t32sys", [None, "unused-trace32-installation"])
+def test_contract_collection_requires_both_explicit_opt_ins(monkeypatch, enabled, port, t32sys):
     for name, value in (("T32MCP_HARDWARE", enabled), ("T32MCP_T32_PORT", port)):
         if value is None:
             monkeypatch.delenv(name, raising=False)
         else:
             monkeypatch.setenv(name, value)
+    if t32sys is None:
+        monkeypatch.delenv("T32SYS", raising=False)
+    else:
+        monkeypatch.setenv("T32SYS", t32sys)
 
     def forbidden_socket(*_args, **_kwargs):
         pytest.fail("contract collection must not create a debugger socket")
@@ -52,9 +57,11 @@ def test_contract_collection_requires_both_explicit_opt_ins(monkeypatch, enabled
     assert module["pytestmark"].args == (True,)
 
 
-def test_enabled_contract_collection_still_does_not_probe(monkeypatch):
+@pytest.mark.parametrize("port", ["20000", "invalid", "65536"])
+def test_enabled_contract_collection_still_does_not_probe(monkeypatch, port):
     monkeypatch.setenv("T32MCP_HARDWARE", "1")
-    monkeypatch.setenv("T32MCP_T32_PORT", "20000")
+    monkeypatch.setenv("T32MCP_T32_PORT", port)
+    monkeypatch.setenv("T32SYS", "unused-trace32-installation")
 
     def forbidden_socket(*_args, **_kwargs):
         pytest.fail("hardware probing belongs in the opted-in test fixture")

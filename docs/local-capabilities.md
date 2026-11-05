@@ -5,7 +5,7 @@
 This implementation uses the installed `lauterbachdebugger-mcp` 0.1.0 as a
 capability reference, not as a dependency or copied implementation. The native
 Rust server remains the single executable. Its focused additions retain the
-upstream 0.3.0 execution-policy tool surface by default rather than reproducing
+upstream 0.3.1 execution-policy tool surface by default rather than reproducing
 all 51 reference tools or enabling automatic reset/flash/write operations. Native
 enhancements require explicit `--native-tools`; they are a local opt-in
 exception, not an upstream-approved pattern for adding capabilities.

@@ -34,6 +34,7 @@ jobs:
       T32MCP_SDIST: ""
       T32MCP_TOKEN: ""
       T32_PORT: ""
+      T32SYS: ""
     defaults:
       run:
         shell: bash
@@ -86,13 +87,13 @@ jobs:
       - name: Build native debug executable
         run: cargo build --manifest-path t32mcp-rs/Cargo.toml --locked
 
-      - name: Check CI helper
-        run: uv run --no-project --python 3.14 python -m unittest discover -s ci -p 'test_*.py'
-
       - name: Prepare locked Python environment
         run: |
           uv python install 3.13
           uv sync --project tests --locked
+
+      - name: Check CI helpers and configuration
+        run: uv run --no-env-file --project tests --locked --offline python -m unittest discover -s ci -p 'test_*.py'
 
       - name: Run offline Python suite against debug executable
         run: uv run --project tests --locked --offline pytest tests

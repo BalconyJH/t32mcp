@@ -59,7 +59,7 @@ $ cargo build --manifest-path t32mcp-rs/Cargo.toml --release
 
 ```
 $ t32mcp --help
-t32mcp v0.3.0 (script interface 1)
+t32mcp v0.3.1 (script interface 1)
 General Options:
   --version                Print version number and exit
   -h, --help               Print this help message and exit
@@ -76,7 +76,7 @@ PowerView Connection:
   --port PORT              TRACE32 Remote API TCP port (default: 20000),
                            repeatable for AMP sessions. The agent can also
                            add and remove ports dynamically itself using the
-                           trace32_manage_instances tool(disabled in
+                           trace32_manage_instances tool (disabled in
                            "strict" execution policy mode).
   --skills DIR             Root location of agent skills (repeatable,
                            required by execution policy "strict")
@@ -87,7 +87,7 @@ See [Execution Policies](#execution-policies) for more information.
 ### Local Extensions And uv Installation
 
 This fork retains local native inspection and packaging on top of upstream
-0.3.0. Upstream release binaries do not include these local extensions.
+0.3.1. Upstream release binaries do not include these local extensions.
 
 ```powershell
 uv tool install .

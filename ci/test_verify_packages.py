@@ -27,6 +27,7 @@ class PackagingGateTests(unittest.TestCase):
             "T32MCP_TOKEN": "old token",
             "t32mcp_future_option": "clear case-insensitively",
             "T32_PORT": "20001",
+            "T32SYS": "unrelated simulator installation",
             "UV_ENV_FILE": "unsafe.env",
             "UV_NO_ENV_FILE": "0",
         }
@@ -115,6 +116,7 @@ class PackagingGateTests(unittest.TestCase):
                     {
                         "T32MCP_HARDWARE": "1",
                         "T32MCP": "old",
+                        "T32SYS": "must not start a simulator",
                         "UV_ENV_FILE": "unsafe.env",
                         "UV_NO_ENV_FILE": "0",
                     },
@@ -152,6 +154,7 @@ class PackagingGateTests(unittest.TestCase):
             self.assertTrue(
                 all("T32MCP_HARDWARE" not in environment for _, environment in calls)
             )
+            self.assertTrue(all("T32SYS" not in environment for _, environment in calls))
             self.assertTrue(
                 all("UV_ENV_FILE" not in environment for _, environment in calls)
             )

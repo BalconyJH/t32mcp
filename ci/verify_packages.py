@@ -17,7 +17,7 @@ def clean_environment() -> dict[str, str]:
         key: value
         for key, value in os.environ.items()
         if not key.upper().startswith("T32MCP")
-        and key.upper() not in {"T32_PORT", "UV_ENV_FILE", "UV_NO_ENV_FILE"}
+        and key.upper() not in {"T32_PORT", "T32SYS", "UV_ENV_FILE", "UV_NO_ENV_FILE"}
     }
     environment["UV_NO_ENV_FILE"] = "1"
     return environment

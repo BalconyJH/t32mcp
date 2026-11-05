@@ -58,7 +58,7 @@ class PackagingTests(unittest.TestCase):
                     (directory / ".python-version").read_text().strip(), "3.14"
                 )
         self.assertIn(
-            "image: ghcr.io/astral-sh/uv:python3.14-bookworm-slim",
+            "PYTEST_IMAGE: 'ghcr.io/astral-sh/uv:python3.14-bookworm-slim'",
             (ROOT / ".gitlab-ci.yml").read_text(),
         )
 

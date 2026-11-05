@@ -1,7 +1,6 @@
 """Explicitly opted-in script interface tests; never probe during collection."""
 
 import os
-import socket
 from pathlib import Path
 
 import pytest
@@ -14,12 +13,6 @@ T32_PORT = os.environ.get("T32MCP_T32_PORT")
 CONTRACT = Path(__file__).parent / "contract"
 
 
-def powerview_reachable() -> bool:
-    with socket.socket() as s:
-        s.settimeout(0.5)
-        return s.connect_ex(("127.0.0.1", int(T32_PORT))) == 0
-
-
 pytestmark = pytest.mark.skipif(
     os.environ.get("T32MCP_HARDWARE") != "1" or not T32_PORT,
     reason="hardware tests require T32MCP_HARDWARE=1 and explicit T32MCP_T32_PORT",
@@ -27,20 +20,18 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="module", autouse=True)
-def contract_hardware():
-    # Collection and default pytest runs never open a debugger socket.
-    assert T32_PORT is not None
-    assert 1 <= int(T32_PORT) <= 65535, "invalid T32MCP_T32_PORT"
-    if not powerview_reachable():
-        pytest.skip(f"no PowerView on explicitly selected port {T32_PORT}")
+def contract_hardware(powerview):
+    """Share the gated simulator fixture with the device-prompt tests."""
+    return powerview
 
 
 async def run(request, interface: int, script: str, args: dict | None = None):
     """The contract skill tests/contract/interface-<n>/contract, loaded via --skills."""
+    port = request.getfixturevalue("contract_hardware")
     client = Client(
         StdioTransport(
             command=t32mcp_path(request),
-            args=["--port", str(T32_PORT), "--execution-policy", "strict", "--skills", str(CONTRACT / f"interface-{interface}")],
+            args=["--port", str(port), "--execution-policy", "strict", "--skills", str(CONTRACT / f"interface-{interface}")],
         )
     )
     async with client:

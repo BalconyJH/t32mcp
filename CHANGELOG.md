@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - Local Enhancements
 ### Changed
+- Sync upstream 0.3.1 and Skills 0.2.0 while retaining local native extensions,
+  Rust 1.96 and Python 3.14 minimum versions, and offline-by-default tests.
+- Skills 0.2.0 document the `strict` call of `trace32_run_script` using
+  `skill_name` and `script_name` rather than `script_path`.
 - Merge upstream 0.3.0: require an explicit execution policy, use the new
   `trace32_*` tools and skill layout, and retain optional native inspection on
   the shared worker. Native requests accept an optional registered `port`;
@@ -56,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-item errors rather than fabricated successful addresses.
 - Documented the distinction between asynchronous polling limits and blocking
   vendor TCP API calls.
+## [0.3.1] - 2026-10-27
+### Added
+- Upstream prebuilt unsigned executables for macOS (`t32mcp-macos-aarch64`, `t32mcp-macos-x86_64`). The local native fork still requires vendor libraries not bundled for macOS.
+
+### Fixed
+- macOS: the first `trace32_run_command` or `trace32_run_script` hung, because the AREA FIFO was opened with the Linux value of `O_NONBLOCK`.
+- Missing space in the `--port` help text.
+- The skills bundle `skills.zip` is attached to the release in the CI job.
 
 ## [0.3.0] - 2026-10-19
 

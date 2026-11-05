@@ -1,13 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Lauterbach GmbH
 # SPDX-License-Identifier: Apache-2.0
 
-"""Offline MCP fixtures: never use a developer's active TRACE32 API port."""
+"""Offline MCP fixtures and explicitly opted-in PowerView integration fixtures."""
 
 import logging
 import os
+import platform
 import secrets
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -48,6 +50,38 @@ DEFAULT_TOOLS = {
 READ_ONLY_TOOLS = {"trace32_get_status"}
 SCRIPTS_TOOLS = DEFAULT_TOOLS - {"trace32_run_command"}
 STRICT_TOOLS = {"trace32_get_status", "trace32_run_script"}
+
+
+def approved_powerview_port() -> int:
+    """Validate both opt-ins before any debugger probe or simulator startup."""
+    configured = os.environ.get("T32MCP_T32_PORT")
+    if os.environ.get("T32MCP_HARDWARE") != "1" or not configured:
+        pytest.skip("hardware tests require T32MCP_HARDWARE=1 and explicit T32MCP_T32_PORT")
+    try:
+        port = int(configured)
+    except ValueError:
+        pytest.fail("invalid T32MCP_T32_PORT: expected an integer from 1 to 65535", pytrace=False)
+    if not 1 <= port <= 65535:
+        pytest.fail("invalid T32MCP_T32_PORT: expected an integer from 1 to 65535", pytrace=False)
+    return port
+
+
+def powerview_executable(t32sys: str) -> str:
+    """The RISC-V simulator of the TRACE32 installation for this platform; keep
+    in sync with ci/start_sim.sh."""
+    if sys.platform == "win32":
+        path = ["windows64", "t32mriscv.exe"]
+    elif sys.platform == "darwin":
+        path = ["macosx64", "t32mriscv-qt"]
+    elif platform.machine().lower() in ("aarch64", "arm64"):
+        path = ["linux-aarch64", "t32mriscv"]
+    else:
+        path = ["pc_linux64", "t32mriscv"]
+    return os.path.join(t32sys, "bin", *path)
+
+
+# Headless Instruction Set Simulator, configured by T32SYS and T32MCP_T32_PORT.
+POWERVIEW_CONFIG = str(Path(__file__).with_name("sim.t32"))
 
 
 def t32mcp_path(request=None) -> str:
@@ -144,16 +178,56 @@ def free_port() -> int:
 
 
 def wait_for_port(port: int, process: subprocess.Popen, timeout: float = 10.0):
-    """Wait for our HTTP server, never for a TRACE32 Remote API endpoint."""
+    """Wait for an owned HTTP server or an explicitly opted-in simulator."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        assert process.poll() is None, f"t32mcp exited with {process.returncode}"
+        assert process.poll() is None, f"{process.args[0]} exited with {process.returncode}"
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.2):
                 return
         except OSError:
             time.sleep(0.05)
-    raise TimeoutError(f"t32mcp does not listen on port {port}")
+    raise TimeoutError(f"{process.args[0]} does not listen on port {port}")
+
+def powerview_reachable(port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+@pytest.fixture(scope="session")
+def powerview(tmp_path_factory):
+    """Reuse the approved endpoint or own a simulator after both explicit opt-ins."""
+    port = approved_powerview_port()
+    if powerview_reachable(port):
+        yield port
+        return
+    t32sys = os.environ.get("T32SYS")
+    if not t32sys:
+        pytest.skip(f"no PowerView on explicitly selected port {port} and no T32SYS to start one")
+    executable = powerview_executable(t32sys)
+    env = dict(os.environ, T32MCP_T32_PORT=str(port))
+    # Output to a log file, not DEVNULL: on Windows, PowerView crashes at start
+    # when its stdout is the NUL device.
+    log = tmp_path_factory.mktemp("powerview") / "powerview.log"
+    LOGGER.info("Starting PowerView: %s (port %s, output: %s)", executable, port, log)
+    startup_options = {}
+    if sys.platform == "win32":
+        startup_options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    with log.open("w", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            [executable, "-c", POWERVIEW_CONFIG],
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            **startup_options,
+        )
+        try:
+            wait_for_port(port, process, timeout=30.0)
+            yield port
+        finally:
+            LOGGER.info("Closing owned PowerView")
+            _stop_owned_process(process)
 
 
 @pytest.fixture(scope="module")

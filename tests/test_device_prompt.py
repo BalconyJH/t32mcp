@@ -24,7 +24,8 @@ async def run_command(client: Client, **args):
 
 
 async def test_device_prompt(request):
-    client = Client(StdioTransport(command=t32mcp_path(request), args=["--port", str(T32_PORT), "--execution-policy", "unrestricted"]))
+    port = request.getfixturevalue("contract_hardware")
+    client = Client(StdioTransport(command=t32mcp_path(request), args=["--port", str(port), "--execution-policy", "unrestricted"]))
     async with client:
         # Selects "::" permanently, like a user typing it in the command line.
         is_error, text = await run_command(client, device_prompt="::")
@@ -37,7 +38,8 @@ async def test_device_prompt(request):
 
 
 async def test_device_prompt_rejected(request):
-    client = Client(StdioTransport(command=t32mcp_path(request), args=["--port", str(T32_PORT), "--execution-policy", "unrestricted"]))
+    port = request.getfixturevalue("contract_hardware")
+    client = Client(StdioTransport(command=t32mcp_path(request), args=["--port", str(port), "--execution-policy", "unrestricted"]))
     async with client:
         for prompt in ["B:: DO x.cmm", "B:", "B::\nDO x.cmm", ""]:
             is_error, text = await run_command(client, device_prompt=prompt)

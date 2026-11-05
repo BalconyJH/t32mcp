@@ -135,10 +135,10 @@ distribution includes the Rust sources, Cargo lock file, both Rust toolchain
 pins, the Python version selection, native Remote API libraries, and both
 license texts.
 
-For a Windows x64 build of version `0.3.0`, install the resulting wheel:
+For a Windows x64 build of version `0.3.1`, install the resulting wheel:
 
 ```powershell
-uv tool install --force --no-index .\dist\t32mcp-0.3.0-py3-none-win_amd64.whl
+uv tool install --force --no-index .\dist\t32mcp-0.3.1-py3-none-win_amd64.whl
 t32mcp --help
 ```
 
